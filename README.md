@@ -1,2 +1,2 @@
 # advanced-programming
-Project developed by Matteo Beltrami (@matteobeltrami), Matteo Bordignon (@Bordi00), Marco Wang (@marco3724) and Christian Sassi for the Advanced Programming course.
+![Dogs Typing](https://media.giphy.com/media/Dh5q0sShxgp13DwrvG/giphy.gif)
