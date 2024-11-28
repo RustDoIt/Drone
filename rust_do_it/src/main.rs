@@ -69,7 +69,12 @@ impl RustDoIt {
     fn handle_command(&mut self, command: DroneCommand) {
         match command {
             DroneCommand::AddSender(node_id, sender) => {
+                
+                if self.packet_send.contains_key(&node_id) {
+                    return;
+                }
 
+                self.packet_send.insert(node_id, sender);
             },
 
             DroneCommand::SetPacketDropRate(pdr) => {
@@ -90,10 +95,6 @@ struct SimulationController {
     drones: HashMap<NodeId, Sender<DroneCommand>>,
     node_event_recv: Receiver<NodeEvent>
 }
-
-// impl controller::SimulationController for SimulationController {
-
-// }
 
 impl SimulationController {
     fn crash_all(&mut self) {
@@ -165,7 +166,7 @@ fn main() {
             .into_iter()
             .map(|id| (id, packet_channels[&id].0.clone()))
             .collect();
-
+        
         handles.push(thread::spawn(move || {
 
             // Creo il drone
@@ -183,20 +184,20 @@ fn main() {
         }));
     }
 
-    // Creao il controller
+    // Crea il controller
     let mut controller = SimulationController {
         drones: drones,
         node_event_recv: node_event_recv
     };
 
     // Controller
-    loop {
-        select_biased! {
-            recv(controller.node_event_recv) -> event => {
-                break;
-            },
-        }
-    }
+    // loop {
+    //     select_biased! {
+    //         recv(controller.node_event_recv) -> event => {
+    //             break;
+    //         },
+    //     }
+    // }
 
     controller.crash_all();
 
