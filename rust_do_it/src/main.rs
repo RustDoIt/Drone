@@ -40,7 +40,9 @@ impl drone::Drone for RustDoIt {
             select_biased! {
                 recv(self.controller_recv) -> command => {
                     if let Ok(command) = command {
-                        self.handle_command(command);
+                       if self.handle_command(command) {
+                            break;
+                        }
                     }
                 },
 
@@ -66,27 +68,29 @@ impl RustDoIt {
         }
     }
 
-    fn handle_command(&mut self, command: DroneCommand) {
+    fn handle_command(&mut self, command: DroneCommand) -> bool {
         match command {
             DroneCommand::AddSender(node_id, sender) => {
                 
                 if self.packet_send.contains_key(&node_id) {
-                    return;
+                    return false;
                 }
 
                 self.packet_send.insert(node_id, sender);
+                false
             },
 
             DroneCommand::SetPacketDropRate(pdr) => {
                 
                 if self.pdr < 0.0 || self.pdr > 1.0 {
-                    return;
+                    return false;
                 }
 
                 self.pdr = pdr;
+                false
             },
 
-            DroneCommand::Crash => unreachable!(),
+            DroneCommand::Crash => true, 
         }
     }
 }
@@ -205,5 +209,7 @@ fn main() {
     while let Some(handle) = handles.pop() {
         handle.join().unwrap();
     }
+    
+    println!("Stop")
 
 }
