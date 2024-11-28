@@ -5,7 +5,7 @@ use wg_2024::drone::{self, Drone};
 use wg_2024::controller::{DroneCommand, NodeEvent};
 use wg_2024::controller;
 use wg_2024::network::NodeId;
-use wg_2024::packet::{Packet, PacketType};
+use wg_2024::packet::{Ack, Nack, Packet, PacketType};
 use wg_2024::config::{self, Config};
 use crossbeam_channel::{bounded, select_biased, unbounded};
 use crossbeam_channel::{Receiver, Sender};
@@ -40,7 +40,7 @@ impl drone::Drone for RustDoIt {
             select_biased! {
                 recv(self.controller_recv) -> command => {
                     if let Ok(command) = command {
-                       if self.handle_command(command) {
+                        if self.handle_command(command) {
                             break;
                         }
                     }
@@ -60,8 +60,46 @@ impl RustDoIt {
 
     fn handle_packet(&mut self, packet: Packet) {
         match packet.pack_type {
-            PacketType::Nack(_nack) => todo!(),
-            PacketType::Ack(_ack) => todo!(),
+            PacketType::Nack(_nack) => {
+                
+                let prev_node = packet.routing_header.hops[packet.routing_header.hop_index - 1];
+
+                if let Some(sender) = self.packet_send.get(&prev_node) {
+                    
+                    let nack = Packet {
+                        pack_type: PacketType::Nack(_nack),
+                        routing_header: packet.routing_header.clone(),
+                        session_id: packet.session_id
+                    };
+
+                    sender.send(nack);
+                }
+                else {
+                    // Error
+                }
+
+            },
+
+            PacketType::Ack(_ack) => {
+                
+                let prev_node = packet.routing_header.hops[packet.routing_header.hop_index - 1];
+
+                if let Some(sender) = self.packet_send.get(&prev_node) {
+                    
+                    let ack = Packet {
+                        pack_type: PacketType::Ack(Ack {
+                            fragment_index: _ack.fragment_index
+                        }),
+                        routing_header: packet.routing_header.clone(),
+                        session_id: packet.session_id
+                    };
+
+                    sender.send(ack);
+                }
+                else {
+                    // Error
+                }
+            },
             PacketType::MsgFragment(_fragment) => todo!(),
             PacketType::FloodRequest(_flood_request) => todo!(),
             PacketType::FloodResponse(_flood_response) => todo!(),
@@ -82,7 +120,7 @@ impl RustDoIt {
 
             DroneCommand::SetPacketDropRate(pdr) => {
                 
-                if self.pdr < 0.0 || self.pdr > 1.0 {
+                if self.pdr > 0.0 || self.pdr < 1.0 {
                     return false;
                 }
 
