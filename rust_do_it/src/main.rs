@@ -72,7 +72,7 @@ impl RustDoIt {
                         session_id: packet.session_id
                     };
 
-                    sender.send(nack);
+                    sender.send(nack).unwrap();
                 }
                 else {
                     // Error
@@ -94,7 +94,7 @@ impl RustDoIt {
                         session_id: packet.session_id
                     };
 
-                    sender.send(ack);
+                    sender.send(ack).unwrap();
                 }
                 else {
                     // Error
