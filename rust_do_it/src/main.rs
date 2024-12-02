@@ -1,11 +1,12 @@
 extern crate wg_2024;
 
+use rand::Rng;
 use wg_2024::{drone::DroneOptions};
 use wg_2024::drone::{self, Drone};
 use wg_2024::controller::{DroneCommand, NodeEvent};
 use wg_2024::controller;
 use wg_2024::network::NodeId;
-use wg_2024::packet::{Ack, Nack, Packet, PacketType};
+use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType};
 use wg_2024::config::{self, Config};
 use crossbeam_channel::{bounded, select_biased, unbounded};
 use crossbeam_channel::{Receiver, Sender};
@@ -15,11 +16,12 @@ use std::{fs, thread};
 
 struct RustDoIt {
     id: NodeId,
-    controller_send: Sender<NodeEvent>,
-    controller_recv: Receiver<DroneCommand>,
-    packet_recv: Receiver<Packet>,
+    controller_send: Sender<NodeEvent>,                 // Used to send events to the controller (receiver is in the controller)
+    controller_recv: Receiver<DroneCommand>,            // Used to receive commands from the controller (sender is in the controller)
+    packet_recv: Receiver<Packet>,                      // The receiving end of the channel for receiving packets from drones
+    packet_send: HashMap<NodeId, Sender<Packet>>,       // Mapping of drone IDs to senders, allowing packets to be sent to specific drones
+
     pdr: f32,
-    packet_send: HashMap<NodeId, Sender<Packet>>,
 }
 
 impl drone::Drone for RustDoIt {
@@ -60,22 +62,26 @@ impl RustDoIt {
 
     fn handle_packet(&mut self, packet: Packet) {
         match packet.pack_type {
+            //when i receive a NACK, the routing header is reversed, so instead of -1 i perfom a +1 to go to the "previous" node
             PacketType::Nack(_nack) => {
                 
-                let prev_node = packet.routing_header.hops[packet.routing_header.hop_index - 1];
+                let next_node = packet.routing_header.hops[packet.routing_header.hop_index + 1];
 
-                if let Some(sender) = self.packet_send.get(&prev_node) {
+                if let Some(sender) = self.packet_send.get(&next_node) {
+                    
+                    let mut routing_header = packet.routing_header.clone();
+                    routing_header.hop_index += 1;
                     
                     let nack = Packet {
                         pack_type: PacketType::Nack(_nack),
-                        routing_header: packet.routing_header.clone(),
+                        routing_header: routing_header.clone(),
                         session_id: packet.session_id
                     };
 
                     sender.send(nack).unwrap();
                 }
                 else {
-                    // Error
+                    println!("ERROREEEEEE")        
                 }
 
             },
@@ -100,9 +106,139 @@ impl RustDoIt {
                     // Error
                 }
             },
-            PacketType::MsgFragment(_fragment) => todo!(),
-            PacketType::FloodRequest(_flood_request) => todo!(),
-            PacketType::FloodResponse(_flood_response) => todo!(),
+
+            PacketType::MsgFragment(fragment) => {
+                // STEP 1
+                // routing_header.hop_index refer to the current node
+                // if the hop_index is equal to my id, it mean that the message is for me
+                if packet.routing_header.hops[packet.routing_header.hop_index] == self.id {
+                    
+                    //STEP 2 
+                    // increasing the hop index by 1 (to refer the next node)
+                    //STEP 3
+                    // check the destination, if the destination is equal to the number of hops, it means that this is the last one
+                    if packet.routing_header.hop_index + 1 == packet.routing_header.hops.len() {
+                        // This drone is the final destination  -> Error (the destination cannot be a drone)
+                        
+                        let mut routing_header = packet.routing_header.clone();
+                        
+                        routing_header.hops.reverse(); //reverse the trace
+                        routing_header.hop_index = routing_header.hops.len() - routing_header.hop_index - 1;//starting node
+
+                        routing_header.hop_index += 1;//this refer to the next node (in the reversed array)
+
+                        let nack = Packet {
+                            pack_type: PacketType::Nack(Nack {fragment_index: fragment.fragment_index, nack_type: NackType::DestinationIsDrone}),
+                            routing_header: routing_header.clone(),
+                            session_id: packet.session_id
+                        };
+    
+                        //send
+                        let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                        sender.send(nack).unwrap();
+
+                        return;
+                    }
+                    else {
+                        // if i'm not the last node, i try to see if the next node is reachable (is one of my neighbour)
+                        let mut routing_header = packet.routing_header.clone();
+
+                        //take the next node and prepare the packet for the next node
+                        routing_header.hop_index += 1;
+                        let new_packet = Packet {
+                            pack_type: PacketType::MsgFragment(fragment.clone()),
+                            routing_header: routing_header.clone(), 
+                            session_id: packet.session_id
+                        };
+                        let next_hop = routing_header.hops[new_packet.routing_header.hop_index];
+                        //if the next node is reachable
+                        if let Some(next_node) = self.packet_send.get(&next_hop) {
+                            
+                            let drop = rand::thread_rng().gen_range(0.0..1.0);
+                            //STEP 5
+                            if drop <= self.pdr {
+                                //the packet need to be dropped, and a nack must be sent
+                                let mut routing_header = packet.routing_header.clone();
+                        
+                                routing_header.hops.reverse(); //reverse the trace
+                                routing_header.hop_index = routing_header.hops.len() - routing_header.hop_index - 1;//starting node
+
+                                routing_header.hop_index += 1;//this refer to the next node (in the reversed array)
+
+                                let nack = Packet {
+                                    pack_type: PacketType::Nack(Nack { fragment_index: fragment.fragment_index, nack_type: NackType::Dropped }),
+                                    routing_header: routing_header.clone(), //
+                                    session_id: packet.session_id
+                                };
+                                
+                                //send
+                                let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                                sender.send(nack).unwrap();
+
+                                return;
+                            }
+                            else {
+                                
+                                next_node.send(new_packet).unwrap();
+                                return;
+                            }
+
+                        }
+                        else {
+                            // STEP 4 : if it is not in my neighbour, send a nack of type error in routing
+                            let mut routing_header = packet.routing_header.clone();
+                        
+                            routing_header.hops.reverse(); //reverse the trace
+                            routing_header.hop_index = routing_header.hops.len() - routing_header.hop_index - 1;//starting node
+
+                            routing_header.hop_index += 1;//this refer to the next node (in the reversed array)
+                                
+                            let nack = Packet {
+                                pack_type: PacketType::Nack(Nack { fragment_index: fragment.fragment_index, nack_type: NackType::ErrorInRouting(next_hop) }),
+                                routing_header: routing_header.clone(), //
+                                session_id: packet.session_id
+                            };
+                            
+                            //send
+                            let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                            sender.send(nack).unwrap();
+
+                            return;
+                        }
+                    }
+
+                }
+                else {
+
+                    let mut routing_header = packet.routing_header.clone();
+                        
+                    routing_header.hops.reverse(); //reverse the trace
+                    routing_header.hop_index = routing_header.hops.len() - routing_header.hop_index - 1;//starting node
+
+                    routing_header.hop_index += 1;//this refer to the next node (in the reversed array)
+
+                    let nack = Packet {
+                        pack_type: PacketType::Nack(Nack { fragment_index: fragment.fragment_index, nack_type: NackType::UnexpectedRecipient(self.id) }),
+                        routing_header: packet.routing_header.clone(),
+                        session_id: packet.session_id
+                    };
+
+                    //send
+                    let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                    sender.send(nack).unwrap();
+
+                    return;
+                }
+                
+            },
+
+            PacketType::FloodRequest(_flood_request) => {
+
+            },
+
+            PacketType::FloodResponse(_flood_response) => {
+
+            },
         }
     }
 
