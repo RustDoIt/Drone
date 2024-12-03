@@ -1,19 +1,22 @@
 extern crate wg_2024;
 
 use rand::Rng;
-use wg_2024::{drone::DroneOptions};
 use wg_2024::drone::{self, Drone};
 use wg_2024::controller::{DroneCommand, NodeEvent};
 use wg_2024::controller;
 use wg_2024::network::NodeId;
 use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType};
 use wg_2024::config::{self, Config};
+use wg_2024::network::{self, SourceRoutingHeader};
 use crossbeam_channel::{bounded, select_biased, unbounded};
 use crossbeam_channel::{Receiver, Sender};
+use wg_2024::packet::Fragment;
+use std::time::Duration;
 
 use std::collections::HashMap;
 use std::{fs, thread};
 
+#[derive(Debug)]
 struct RustDoIt {
     id: NodeId,
     controller_send: Sender<NodeEvent>,                 // Used to send events to the controller (receiver is in the controller)
@@ -26,18 +29,27 @@ struct RustDoIt {
 
 impl drone::Drone for RustDoIt {
 
-    fn new(options: DroneOptions) -> Self {
+    fn new(
+        id: NodeId,
+        controller_send: Sender<NodeEvent>,
+        controller_recv: Receiver<DroneCommand>,
+        packet_recv: Receiver<Packet>,
+        packet_send: HashMap<NodeId, Sender<Packet>>,
+        pdr: f32,
+    ) -> Self {
         return Self {
-            id: options.id,
-            controller_send: options.controller_send,
-            controller_recv: options.controller_recv,
-            packet_recv: options.packet_recv,
-            pdr: options.pdr,
-            packet_send: HashMap::new(),
+            id,
+            controller_send,
+            controller_recv,
+            packet_recv,
+            packet_send,
+            pdr,
         };
     }
 
     fn run(&mut self) {
+        println!("Drone {} is Running",self.id);
+
         loop {
             select_biased! {
                 recv(self.controller_recv) -> command => {
@@ -49,8 +61,13 @@ impl drone::Drone for RustDoIt {
                 },
 
                 recv(self.packet_recv) -> packet => {
+                    println!("Qualcosa packet_recv");
                     if let Ok(packet) = packet {
+                        println!("Ok packet_recv");
                         self.handle_packet(packet);
+                    }
+                    else {
+                        println!("Error packet_recv");
                     }
                 }
             }
@@ -61,6 +78,7 @@ impl drone::Drone for RustDoIt {
 impl RustDoIt {
 
     fn handle_packet(&mut self, packet: Packet) {
+        println!("Received packet of type {:?}",packet.pack_type);
         match packet.pack_type {
             //when i receive a NACK, the routing header is reversed, so instead of -1 i perfom a +1 to go to the "previous" node
             PacketType::Nack(_nack) => {
@@ -83,27 +101,29 @@ impl RustDoIt {
                 else {
                     println!("ERROREEEEEE")        
                 }
-
             },
 
             PacketType::Ack(_ack) => {
-                
-                let prev_node = packet.routing_header.hops[packet.routing_header.hop_index - 1];
 
-                if let Some(sender) = self.packet_send.get(&prev_node) {
-                    
+                let next_node = packet.routing_header.hops[packet.routing_header.hop_index + 1];
+
+                if let Some(sender) = self.packet_send.get(&next_node) {
+
+                    let mut routing_header = packet.routing_header.clone();
+                    routing_header.hop_index += 1;
+
                     let ack = Packet {
                         pack_type: PacketType::Ack(Ack {
                             fragment_index: _ack.fragment_index
                         }),
-                        routing_header: packet.routing_header.clone(),
+                        routing_header: routing_header.clone(),
                         session_id: packet.session_id
                     };
 
                     sender.send(ack).unwrap();
                 }
                 else {
-                    // Error
+                    println!("ERROREEEEEE")
                 }
             },
 
@@ -264,7 +284,15 @@ impl RustDoIt {
                 false
             },
 
-            DroneCommand::Crash => true, 
+            DroneCommand::Crash => true,
+            //DroneCommand::RemoveSender(_) => {unimplemented!()}
+            DroneCommand::RemoveSender(node_id) => {
+                if self.packet_send.remove(&node_id).is_some() {
+                    true // Ritorna true se il mittente è stato rimosso con successo
+                } else {
+                    false // Ritorna false se non c'era un mittente associato a node_id
+                }
+            },
         }
     }
 }
@@ -448,3 +476,53 @@ fn main() {
 }
 
 
+
+#[cfg(test)]
+mod tests {
+    use wg_2024::packet::Fragment;
+    use super::*;
+    fn create_sample_packet() -> Packet {
+        Packet {
+            pack_type: PacketType::MsgFragment(Fragment {
+                fragment_index: 1,
+                total_n_fragments: 1,
+                length: 128,
+                data: [1; 128],
+            }),
+            routing_header: SourceRoutingHeader {
+                hop_index: 1,
+                hops: vec![1, 11, 12, 21],
+            },
+            session_id: 1,
+        }
+    }
+    #[test]
+    pub fn generic_packet_forward(){
+        let (d_send, d_recv) = unbounded();
+        let (d2_send, d2_recv) = unbounded::<Packet>();
+        let (_d_command_send, d_command_recv) = unbounded();
+        let neighbours = HashMap::from([(12, d2_send.clone())]);
+
+        let mut drone11 = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv,
+            d_recv.clone(),
+            neighbours,
+            0.0,
+        );
+        thread::spawn(move || {
+            drone11.run();
+        });
+
+        let mut msg = create_sample_packet();
+
+        // "Client" sends packet to d
+        d_send.send(msg.clone()).unwrap();
+        msg.routing_header.hop_index = 2;
+
+        // d2 receives packet from d1
+        //assert_eq!(d2_recv.recv().unwrap(), msg);
+        println!("{:?}", d2_recv.recv().unwrap());
+    }
+}
