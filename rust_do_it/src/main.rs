@@ -299,91 +299,152 @@ fn parse_config(file: &str) -> Config {
 
 fn main() {
 
-    let config = parse_config("src/config.toml");
-
-    //? PACCHETTI
-
-    // Da ad ogni drone un canale per scambiare pacchetti (unbounded)
-    let mut packet_channels = HashMap::new();
-    for drone in config.drone.iter() {
-        packet_channels.insert(drone.id, unbounded());
-    }
-
-    // Da ad ogni client un canale per scambiare pacchetti (unbounded)
-    for client in config.client.iter() {
-        packet_channels.insert(client.id, unbounded());
-    }
-
-    // Da ad ogni server un canale per scambiare pacchetti (unbounded)
-    for server in config.server.iter() {
-        packet_channels.insert(server.id, unbounded());
-    }
-
-    //? SIMULATION CONTROLLER
-
-    let mut handles = Vec::new();
-
-    let mut drones = HashMap::new();
-    let (node_event_send, node_event_recv) = unbounded(); 
-
-    for drone in config.drone.into_iter() {
-
-        // Da al controller un canale per comunicare con ogni drone
-        let (controller_drone_send, controller_drone_recv) = unbounded();
-        drones.insert(drone.id, controller_drone_send);
-        
-        // Canale drone -> controller per i log
-        let node_event_send = node_event_send.clone();
-
-        // Clona il receiver di ogni drone
-        let packet_recv = packet_channels[&drone.id].1.clone();
-
-        // Prende tutti i sender verso ogni drone
-        let packet_send: HashMap<NodeId, Sender<Packet>> = drone
-            .connected_node_ids
-            .into_iter()
-            .map(|id| (id, packet_channels[&id].0.clone()))
-            .collect();
-        
-        handles.push(thread::spawn(move || {
-
-            // Creo il drone
-            let mut drone = RustDoIt::new(DroneOptions {
-                id: drone.id,
-                controller_recv: controller_drone_recv, // Do al drone il canale per ricevere i comandi del controller
-                controller_send: node_event_send, // Uso il canale send per inviare al controller i log
-                packet_recv: packet_recv, // Do al drone il receiver per ricevere i pacchetti
-                packet_send: packet_send, // Do al drone una hashmap per comunicare a tutti i droni COLLEGATI 
-                pdr: drone.pdr
-            });
-            
-            // Eseguo il drone
-            drone.run();
-        }));
-    }
-
-    // Crea il controller
-    let mut controller = SimulationController {
-        drones: drones,
-        node_event_recv: node_event_recv
-    };
-
-    // Controller
-    // loop {
-    //     select_biased! {
-    //         recv(controller.node_event_recv) -> event => {
-    //             break;
-    //         },
-    //     }
+    // let config = parse_config("src/config.toml");
+    //
+    // //? PACCHETTI
+    //
+    // // Da ad ogni drone un canale per scambiare pacchetti (unbounded)
+    // let mut packet_channels = HashMap::new();
+    // for drone in config.drone.iter() {
+    //     packet_channels.insert(drone.id, unbounded());
     // }
+    //
+    // // Da ad ogni client un canale per scambiare pacchetti (unbounded)
+    // for client in config.client.iter() {
+    //     packet_channels.insert(client.id, unbounded());
+    // }
+    //
+    // // Da ad ogni server un canale per scambiare pacchetti (unbounded)
+    // for server in config.server.iter() {
+    //     packet_channels.insert(server.id, unbounded());
+    // }
+    //
+    // //? SIMULATION CONTROLLER
+    //
+    // let mut handles = Vec::new();
+    //
+    // let mut drones = HashMap::new();
+    // let (node_event_send, node_event_recv) = unbounded();
+    //
+    // for drone in config.drone.into_iter() {
+    //
+    //     // Da al controller un canale per comunicare con ogni drone
+    //     let (controller_drone_send, controller_drone_recv) = unbounded();
+    //     drones.insert(drone.id, controller_drone_send);
+    //
+    //     // Canale drone -> controller per i log
+    //     let node_event_send = node_event_send.clone();
+    //
+    //     // Clona il receiver di ogni drone
+    //     let packet_recv = packet_channels[&drone.id].1.clone();
+    //
+    //     // Prende tutti i sender verso ogni drone
+    //     let packet_send: HashMap<NodeId, Sender<Packet>> = drone
+    //         .connected_node_ids
+    //         .into_iter()
+    //         .map(|id| (id, packet_channels[&id].0.clone()))
+    //         .collect();
+    //
+    //     handles.push(thread::spawn(move || {
+    //
+    //         // Creo il drone
+    //         let mut drone = RustDoIt::new(
+    //             drone.id,
+    //             node_event_send, // Uso il canale send per inviare al controller i log
+    //             controller_drone_recv, // Do al drone il canale per ricevere i comandi del controller
+    //             packet_recv, // Do al drone il receiver per ricevere i pacchetti
+    //             packet_send, // Do al drone una hashmap per comunicare a tutti i droni COLLEGATI
+    //             drone.pdr
+    //         );
+    //
+    //         // Eseguo il drone
+    //         drone.run();
+    //     }));
+    // }
+    //
+    // // Crea il controller
+    // let mut controller = SimulationController {
+    //     drones: drones,
+    //     node_event_recv: node_event_recv
+    // };
+    //
+    // // Controller
+    // // loop {
+    // //     select_biased! {
+    // //         recv(controller.node_event_recv) -> event => {
+    // //             break;
+    // //         },
+    // //     }
+    // // }
+    //
+    // controller.crash_all();
+    //
+    // // Aspetta fino a quando tutti i thread non terminano
+    // while let Some(handle) = handles.pop() {
+    //     handle.join().unwrap();
+    // }
+    //
+    // println!("Stop")
 
-    controller.crash_all();
+    let (d1_send, d1_recv) = unbounded();
+    let (d2_send, d2_recv) = unbounded::<Packet>();
+    let (_d_command_send, _) = unbounded();
+    let (_, d_command_recv) = unbounded();
+    let neighbours = HashMap::from([(12, d2_send.clone())]);
+    let mut drone = RustDoIt::new(
+        11,
+        _d_command_send,
+        d_command_recv,
+        d1_recv,
+        neighbours,
+        0.0,
+    );
 
-    // Aspetta fino a quando tutti i thread non terminano
-    while let Some(handle) = handles.pop() {
-        handle.join().unwrap();
+
+    // let mut drone2 = RustDoIt::new(
+    //     12,
+    //     _d_command_send,
+    //     d_command_recv,
+    //     d1_recv,
+    //     neighbours,
+    //     0.0,
+    // );
+    println!("DRONE: {:?}", drone);
+
+
+    let custom_fragment = Fragment {
+        fragment_index: 0,
+        total_n_fragments: 1,
+        length: 1,
+        data: [0; 128],
+    };
+    println!("FRAGMENT: {:?}", custom_fragment);
+    let custom_routing_header = SourceRoutingHeader {
+        hop_index: 1,
+        hops: vec![0,1,2,3],
+    };
+    let custom_packet = Packet {
+        pack_type: PacketType::MsgFragment(custom_fragment),
+        routing_header: custom_routing_header,
+        session_id: 0,
+    };
+    println!("PACKET: {:?}", custom_packet);
+
+    let drone_thread = thread::spawn(move || {
+        drone.run();
+    });
+
+    //thread::sleep(Duration::new(5, 0));
+
+    match d1_send.send(custom_packet.clone()) {
+        Ok(()) => println!("ok"),
+        _ => println!("Error")
     }
-    
-    println!("Stop")
+    // let received =  d1_recv.recv().unwrap();
+    // println!("{:?}", received);
+
+    drone_thread.join().unwrap();
 
 }
+
+
