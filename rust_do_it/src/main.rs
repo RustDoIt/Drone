@@ -38,12 +38,12 @@ impl drone::Drone for RustDoIt {
         pdr: f32,
     ) -> Self {
         return Self {
-            id,
-            controller_send,
-            controller_recv,
-            packet_recv,
-            packet_send,
-            pdr,
+            id: id,
+            controller_send: controller_send,
+            controller_recv: controller_recv,
+            packet_recv: packet_recv,
+            packet_send: packet_send,
+            pdr: pdr,
         };
     }
 
@@ -53,11 +53,18 @@ impl drone::Drone for RustDoIt {
         loop {
             select_biased! {
                 recv(self.controller_recv) -> command => {
-                    if let Ok(command) = command {
-                        if self.handle_command(command) {
-                            break;
-                        }
+
+                    match command {
+                        Ok(drone_command) => {},
+                        Err(err) => println!("Error: {:?}", err)
                     }
+
+                    // println!("Qualcosa controller_recv");
+                    // if let Ok(command) = command {
+                    //     if self.handle_command(command) {
+                    //         break;
+                    //     }
+                    // }
                 },
 
                 recv(self.packet_recv) -> packet => {
@@ -414,65 +421,77 @@ fn main() {
     //
     // println!("Stop")
 
-    let (d1_send, d1_recv) = unbounded();
-    let (d2_send, d2_recv) = unbounded::<Packet>();
-    let (_d_command_send, _) = unbounded();
-    let (_, d_command_recv) = unbounded();
-    let neighbours = HashMap::from([(12, d2_send.clone())]);
+    let (drone_send, drone_recv) = unbounded();
+    let (controller_send, controller_recv) = unbounded();
+    //while let Ok(_) = controller_recv.try_recv() {}
+
+    let (packet_send, packet_recv) = unbounded();
+    //while let Ok(_) = packet_recv.try_recv() {}
+
+    let mut controller = SimulationController {
+        drones: HashMap::from([(1, controller_send)]),
+        node_event_recv: drone_recv
+    };
+
+    // let controller_thread = thread::spawn(move || {
+    //     loop {
+    //         select_biased! {
+    //             recv(controller.node_event_recv) -> event => {
+    //                 println!("{:?}", event);
+    //             },
+    //         }
+    //     }
+    // });
+
     let mut drone = RustDoIt::new(
-        11,
-        _d_command_send,
-        d_command_recv,
-        d1_recv,
-        neighbours,
-        0.0,
+        1,
+        drone_send,
+        controller_recv,
+        packet_recv,
+        HashMap::new(),
+        0.0
     );
-
-
-    // let mut drone2 = RustDoIt::new(
-    //     12,
-    //     _d_command_send,
-    //     d_command_recv,
-    //     d1_recv,
-    //     neighbours,
-    //     0.0,
-    // );
-    println!("DRONE: {:?}", drone);
-
-
-    let custom_fragment = Fragment {
-        fragment_index: 0,
-        total_n_fragments: 1,
-        length: 1,
-        data: [0; 128],
-    };
-    println!("FRAGMENT: {:?}", custom_fragment);
-    let custom_routing_header = SourceRoutingHeader {
-        hop_index: 1,
-        hops: vec![0,1,2,3],
-    };
-    let custom_packet = Packet {
-        pack_type: PacketType::MsgFragment(custom_fragment),
-        routing_header: custom_routing_header,
-        session_id: 0,
-    };
-    println!("PACKET: {:?}", custom_packet);
 
     let drone_thread = thread::spawn(move || {
         drone.run();
     });
 
-    //thread::sleep(Duration::new(5, 0));
+    let fragment = Fragment {
+        fragment_index: 0,
+        total_n_fragments: 1,
+        length: 1,
+        data: [0; 128],
+    };
 
-    match d1_send.send(custom_packet.clone()) {
-        Ok(()) => println!("ok"),
+    let routing_header = SourceRoutingHeader {
+        hop_index: 1,
+        hops: vec![0,1,2,3],
+    };
+
+    let packet = Packet {
+        pack_type: PacketType::MsgFragment(fragment),
+        routing_header: routing_header,
+        session_id: 0,
+    };
+
+    match packet_send.send(packet) {
+        Ok(()) => println!("Ok"),
         _ => println!("Error")
     }
-    // let received =  d1_recv.recv().unwrap();
-    // println!("{:?}", received);
+
+    loop {
+        select_biased! {
+            recv(controller.node_event_recv) -> event => {
+
+                if let Ok(event) = event {
+                    println!("{:?}", event);
+                }
+
+            },
+        }
+    }
 
     drone_thread.join().unwrap();
-
 }
 
 
