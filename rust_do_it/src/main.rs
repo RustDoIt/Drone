@@ -2,7 +2,7 @@ extern crate wg_2024;
 
 use rand::Rng;
 use wg_2024::drone::{self, Drone};
-use wg_2024::controller::{DroneCommand, NodeEvent};
+use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::controller;
 use wg_2024::network::NodeId;
 use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType};
@@ -19,7 +19,7 @@ use std::{fs, thread};
 #[derive(Debug)]
 struct RustDoIt {
     id: NodeId,
-    controller_send: Sender<NodeEvent>,                 // Used to send events to the controller (receiver is in the controller)
+    controller_send: Sender<DroneEvent>,                 // Used to send events to the controller (receiver is in the controller)
     controller_recv: Receiver<DroneCommand>,            // Used to receive commands from the controller (sender is in the controller)
     packet_recv: Receiver<Packet>,                      // The receiving end of the channel for receiving packets from drones
     packet_send: HashMap<NodeId, Sender<Packet>>,       // Mapping of drone IDs to senders, allowing packets to be sent to specific drones
@@ -31,7 +31,7 @@ impl drone::Drone for RustDoIt {
 
     fn new(
         id: NodeId,
-        controller_send: Sender<NodeEvent>,
+        controller_send: Sender<DroneEvent>,
         controller_recv: Receiver<DroneCommand>,
         packet_recv: Receiver<Packet>,
         packet_send: HashMap<NodeId, Sender<Packet>>,
@@ -260,11 +260,11 @@ impl RustDoIt {
             },
 
             PacketType::FloodRequest(_flood_request) => {
-
+                todo!()
             },
 
             PacketType::FloodResponse(_flood_response) => {
-
+                todo!()
             },
         }
     }
@@ -306,7 +306,7 @@ impl RustDoIt {
 
 struct SimulationController {
     drones: HashMap<NodeId, Sender<DroneCommand>>,
-    node_event_recv: Receiver<NodeEvent>
+    node_event_recv: Receiver<DroneEvent>
 }
 
 impl SimulationController {
@@ -433,19 +433,9 @@ fn main() {
         node_event_recv: drone_recv
     };
 
-    // let controller_thread = thread::spawn(move || {
-    //     loop {
-    //         select_biased! {
-    //             recv(controller.node_event_recv) -> event => {
-    //                 println!("{:?}", event);
-    //             },
-    //         }
-    //     }
-    // });
-
     let mut drone = RustDoIt::new(
         1,
-        drone_send,
+        unbounded().0,
         controller_recv,
         packet_recv,
         HashMap::new(),
@@ -479,17 +469,6 @@ fn main() {
         _ => println!("Error")
     }
 
-    loop {
-        select_biased! {
-            recv(controller.node_event_recv) -> event => {
-
-                if let Ok(event) = event {
-                    println!("{:?}", event);
-                }
-
-            },
-        }
-    }
 
     drone_thread.join().unwrap();
 }
@@ -515,7 +494,9 @@ mod tests {
             session_id: 1,
         }
     }
+
     #[test]
+    #[cfg(feature = "partial_eq")]
     pub fn generic_packet_forward(){
         let (d_send, d_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
@@ -541,7 +522,46 @@ mod tests {
         msg.routing_header.hop_index = 2;
 
         // d2 receives packet from d1
-        //assert_eq!(d2_recv.recv().unwrap(), msg);
-        println!("{:?}", d2_recv.recv().unwrap());
+
+        let packet_received = d2_recv.recv().unwrap();
+        println!("{:?}", packet_received);
+        assert_eq!(packet_received.routing_header.hop_index, 2);
+        assert_eq!(packet_received, msg);
+    }
+
+    #[test]
+    //#[cfg(feature = "partial_eq")]
+    pub fn generic_nack_forward() {
+        let (d1_send, d1_recv) = unbounded();
+        let (d2_send, d2_recv) = unbounded::<Packet>();
+        let (_d_command_send, d_command_recv) = unbounded();
+        let neighbours = HashMap::from([(1, d2_send.clone())]);
+
+        let mut drone11 = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv,
+            d1_recv.clone(),
+            neighbours,
+            0.0,
+        );
+        thread::spawn(move || {
+            drone11.run();
+        });
+
+        let mut msg = create_sample_packet();
+
+        // "Client" sends packet to d
+        d1_send.send(msg.clone()).unwrap();
+        msg.routing_header.hop_index = 2;
+
+        // d2 receives packet from d1
+
+        let packet_received = d2_recv.recv().unwrap();
+        println!("RECEIVED: {:?}", packet_received);
+        println!("TYPE: {:?}", packet_received.pack_type);
+        //PacketType::Nack(Nack {fragment_index: fragment.fragment_index, nack_type: NackType::DestinationIsDrone})
+
+        //assert!(matches!(packet_received.pack_type, PacketType::Nack(_)));
     }
 }
