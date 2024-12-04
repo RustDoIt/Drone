@@ -68,7 +68,6 @@ impl Drone for RustDoIt {
                 },
 
                 recv(self.packet_recv) -> packet => {
-                    println!("Qualcosa packet_recv");
                     if let Ok(packet) = packet {
                         println!("Ok packet_recv");
                         self.handle_packet(packet);
@@ -82,11 +81,17 @@ impl Drone for RustDoIt {
     }
 }
 
+
+
 impl RustDoIt {
 
     fn handle_packet(&mut self, packet: Packet) {
+        let packet_dropped_event = DroneEvent::PacketDropped(packet.clone());
+        let packet_sent_event = DroneEvent::PacketSent(packet.clone());
+        let packet_shortcut_event = DroneEvent::ControllerShortcut(packet.clone());
         println!("Received packet of type {:?}",packet.pack_type);
         match packet.pack_type {
+          
             //when i receive a NACK, the routing header is reversed, so instead of -1 i perfom a +1 to go to the "previous" node
             PacketType::Nack(_nack) => {
                 
@@ -102,10 +107,14 @@ impl RustDoIt {
                         routing_header: routing_header.clone(),
                         session_id: packet.session_id
                     };
-
-                    sender.send(nack).unwrap();
+                    let _ =match sender.send(nack){
+                        Ok(_) => self.controller_send.send(packet_sent_event),
+                        Err(_) => self.controller_send.send(packet_shortcut_event),
+                    };
+                    
                 }
                 else {
+                    let _ = self.controller_send.send(packet_dropped_event);
                     println!("ERROREEEEEE")        
                 }
             },
@@ -126,15 +135,20 @@ impl RustDoIt {
                         routing_header: routing_header.clone(),
                         session_id: packet.session_id
                     };
-
-                    sender.send(ack).unwrap();
+                    let _ = match sender.send(ack){
+                        Ok(_) =>  self.controller_send.send(packet_sent_event),
+                        Err(_) =>  self.controller_send.send(packet_shortcut_event),
+                    };
+                   
                 }
                 else {
+                    let _ = self.controller_send.send(packet_dropped_event);
                     println!("ERROREEEEEE")
                 }
             },
 
             PacketType::MsgFragment(fragment) => {
+
                 // STEP 1
                 // routing_header.hop_index refer to the current node
                 // if the hop_index is equal to my id, it mean that the message is for me
@@ -160,11 +174,13 @@ impl RustDoIt {
                             session_id: packet.session_id
                         };
     
-                        //send
+                        //send a nack
                         let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                        sender.send(nack).unwrap();
-
-                        return;
+                        let _ = match sender.send(nack){
+                            Ok(_) => self.controller_send.send(packet_dropped_event),
+                            Err(_) => self.controller_send.send(packet_shortcut_event),
+                        };
+                        return 
                     }
                     else {
                         // if i'm not the last node, i try to see if the next node is reachable (is one of my neighbour)
@@ -200,13 +216,20 @@ impl RustDoIt {
                                 
                                 //send
                                 let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                                sender.send(nack).unwrap();
-
+                                let _ = match sender.send(nack){
+                                    Ok(_) =>  self.controller_send.send(packet_dropped_event),
+                                    Err(_) =>  self.controller_send.send(packet_shortcut_event),
+                                };
                                 return;
                             }
                             else {
                                 
-                                next_node.send(new_packet).unwrap();
+                               
+                                let _ = match next_node.send(new_packet){
+                                    Ok(_) => self.controller_send.send(packet_sent_event),
+                                    Err(_) => self.controller_send.send(packet_shortcut_event),
+                                };
+                                
                                 return;
                             }
 
@@ -228,8 +251,11 @@ impl RustDoIt {
                             
                             //send
                             let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                            sender.send(nack).unwrap();
-
+                            let _ = match sender.send(nack) {
+                                Ok(_) => self.controller_send.send(packet_dropped_event),
+                                Err(_) => self.controller_send.send(packet_shortcut_event),
+                            };
+                            
                             return;
                         }
                     }
@@ -252,8 +278,11 @@ impl RustDoIt {
 
                     //send
                     let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                    sender.send(nack).unwrap();
-
+                    let _ = match sender.send(nack){
+                        Ok(_) => self.controller_send.send(packet_dropped_event),
+                        Err(_) => self.controller_send.send(packet_shortcut_event),
+                    };
+                    
                     return;
                 }
                 
