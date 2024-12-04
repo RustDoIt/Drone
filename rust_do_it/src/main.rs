@@ -54,17 +54,14 @@ impl Drone for RustDoIt {
             select_biased! {
                 recv(self.controller_recv) -> command => {
 
-                    match command {
-                        Ok(drone_command) => {},
-                        Err(err) => println!("Error: {:?}", err)
+                    if let Ok(command) = command {
+                        if self.handle_command(command) {
+                            break;
+                        }
                     }
-
-                    // println!("Qualcosa controller_recv");
-                    // if let Ok(command) = command {
-                    //     if self.handle_command(command) {
-                    //         break;
-                    //     }
-                    // }
+                    else {
+                        println!("Error controller_recv");
+                    }
                 },
 
                 recv(self.packet_recv) -> packet => {
@@ -369,34 +366,29 @@ impl RustDoIt {
     fn handle_command(&mut self, command: DroneCommand) -> bool {
         match command {
             DroneCommand::AddSender(node_id, sender) => {
-                
-                if self.packet_send.contains_key(&node_id) {
-                    return false;
+                if !self.packet_send.contains_key(&node_id) {
+                    self.packet_send.insert(node_id, sender);
                 }
-
-                self.packet_send.insert(node_id, sender);
                 false
             },
 
             DroneCommand::SetPacketDropRate(pdr) => {
-                
-                if self.pdr > 0.0 || self.pdr < 1.0 {
-                    return false;
+                if pdr >= 0.0 && pdr <= 1.0 {
+                    self.pdr = pdr;
                 }
-
-                self.pdr = pdr;
                 false
             },
 
             DroneCommand::Crash => true, //todo!()
-            //DroneCommand::RemoveSender(_) => {unimplemented!()}
-            // DA CONTROLLARE 
+
             DroneCommand::RemoveSender(node_id) => {
-                if self.packet_send.remove(&node_id).is_some() {
-                    true // Ritorna true se il mittente è stato rimosso con successo
-                } else {
-                    false // Ritorna false se non c'era un mittente associato a node_id
+                if let Some(_removed_sender) = self.packet_send.remove(&node_id) {
+                    println!("Removed {} from drone {}", node_id, self.id);
                 }
+                else {
+                    println!("{} not found in drone {}", node_id, self.id);
+                }
+                false
             },
         }
     }
