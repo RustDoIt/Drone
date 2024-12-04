@@ -183,10 +183,12 @@ impl RustDoIt {
                 let next_node = packet.routing_header.hops[packet.routing_header.hop_index + 1];
 
                 if let Some(sender) = self.packet_send.get(&next_node) {
-                    let mut routing_header = packet.routing_header.clone();
-                    routing_header.hop_index += 1;
 
-                    let ack = Self::build_ack(routing_header, ack.fragment_index, packet.session_id);
+                    let ack = Self::build_ack(
+                        packet.routing_header.clone(),
+                        ack.fragment_index,
+                        packet.session_id
+                    );
 
                     self.forward_packet(sender.clone(), ack, packet_sent_event, packet_shortcut_event);
 
@@ -225,18 +227,13 @@ impl RustDoIt {
                     }
                     else {
                         // if i'm not the last node, i try to see if the next node is reachable (is one of my neighbour)
-                        let mut routing_header = packet.routing_header.clone();
-
-                        //take the next node and prepare the packet for the next node
-                        routing_header.hop_index += 1;
-
                         let new_packet = Self::build_message(
-                            routing_header.clone(),
+                            packet.routing_header.clone(),
                             fragment.clone(),
                             packet.session_id
                         );
 
-                        let next_hop = routing_header.hops[new_packet.routing_header.hop_index];
+                        let next_hop = new_packet.routing_header.hops[new_packet.routing_header.hop_index];
                         //if the next node is reachable
                         if let Some(next_node) = self.packet_send.get(&next_hop) {
                             
@@ -252,7 +249,7 @@ impl RustDoIt {
                                 );
 
                                 //send
-                                let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                                let sender = self.packet_send.get(&nack.routing_header.hops[nack.routing_header.hop_index]).unwrap();
                                 let _ = self.controller_send.send(packet_dropped_event);
                                 self.forward_packet(sender.clone(), nack.clone(), DroneEvent::PacketSent(nack.clone()), packet_shortcut_event);
                                 return;
@@ -276,7 +273,7 @@ impl RustDoIt {
                             );
 
                             //send
-                            let sender = self.packet_send.get(&routing_header.hops[routing_header.hop_index]).unwrap();
+                            let sender = self.packet_send.get(&nack.routing_header.hops[nack.routing_header.hop_index]).unwrap();
                             let _ = self.controller_send.send(packet_dropped_event); //send the status of the original packet to the controller
                             self.forward_packet(sender.clone(), nack.clone(), DroneEvent::PacketSent(nack.clone()), packet_shortcut_event);
                             return;
