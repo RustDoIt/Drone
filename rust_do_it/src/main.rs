@@ -173,8 +173,9 @@ impl RustDoIt {
     
                         //send a nack
                         let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                        let _ = match sender.send(nack){
-                            Ok(_) => self.controller_send.send(packet_dropped_event),
+                        let _ = self.controller_send.send(packet_dropped_event); //send the status of the original packet
+                        let _ = match sender.send(nack.clone()){
+                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(nack.clone())), //send the status of the nack
                             Err(_) => self.controller_send.send(packet_shortcut_event),
                         };
                         return 
@@ -213,18 +214,19 @@ impl RustDoIt {
                                 
                                 //send
                                 let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                                let _ = match sender.send(nack){
-                                    Ok(_) =>  self.controller_send.send(packet_dropped_event),
+                                let _ = self.controller_send.send(packet_dropped_event);
+                                let _ = match sender.send(nack.clone()){
+                                    Ok(_) =>  self.controller_send.send(DroneEvent::PacketSent(nack.clone())),
                                     Err(_) =>  self.controller_send.send(packet_shortcut_event),
                                 };
                                 return;
                             }
                             else {
                                 
-                               
+                                //forward the packet and send the status, it it is not sent, log a drop event
                                 let _ = match next_node.send(new_packet){
                                     Ok(_) => self.controller_send.send(packet_sent_event),
-                                    Err(_) => self.controller_send.send(packet_shortcut_event),
+                                    Err(_) => self.controller_send.send(packet_dropped_event),
                                 };
                                 
                                 return;
@@ -248,9 +250,10 @@ impl RustDoIt {
                             
                             //send
                             let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                            let _ = match sender.send(nack) {
-                                Ok(_) => self.controller_send.send(packet_dropped_event),
-                                Err(_) => self.controller_send.send(packet_shortcut_event),
+                            let _ = self.controller_send.send(packet_dropped_event); //send the status of the original packet to the controller
+                            let _ = match sender.send(nack.clone()) {
+                                Ok(_) => self.controller_send.send(DroneEvent::PacketSent(nack.clone())),// send the status of the nack
+                                Err(_) => self.controller_send.send(packet_shortcut_event),// send the status of the nack
                             };
                             
                             return;
@@ -275,8 +278,9 @@ impl RustDoIt {
 
                     //send
                     let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
-                    let _ = match sender.send(nack){
-                        Ok(_) => self.controller_send.send(packet_dropped_event),
+                    let _ = self.controller_send.send(packet_dropped_event);
+                    let _ = match sender.send(nack.clone()){
+                        Ok(_) => self.controller_send.send(DroneEvent::PacketSent(nack.clone())),
                         Err(_) => self.controller_send.send(packet_shortcut_event),
                     };
                     
@@ -312,7 +316,7 @@ impl RustDoIt {
                 } else {
                     let sender_node_id = flood_request.path_trace.len() - 1;
                     flood_request.path_trace.push((self.id, NodeType::Drone));
-                    for neighbour in self.packet_send {
+                    for neighbour in self.packet_send.clone() {
                         if neighbour.0 != flood_request.path_trace[sender_node_id].0 {
                             let mut routing_header = packet.routing_header.clone();
                             routing_header.hop_index += 1;
@@ -511,7 +515,7 @@ fn main() {
     //
     // println!("Stop")
 
-    let (_drone_send, drone_recv) = unbounded();
+    let (_drone_send, drone_recv) = unbounded::<Packet>();
     let (_controller_send, controller_recv) = unbounded();
     //while let Ok(_) = controller_recv.try_recv() {}
 
