@@ -1,20 +1,20 @@
 extern crate wg_2024;
 
 use rand::Rng;
-use wg_2024::drone::{self, Drone};
+use wg_2024::drone::{Drone};
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::controller;
 use wg_2024::network::NodeId;
-use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType};
-use wg_2024::config::{self, Config};
-use wg_2024::network::{self, SourceRoutingHeader};
-use crossbeam_channel::{bounded, select_biased, unbounded};
+use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType, NodeType, FloodRequest, FloodResponse};
+use wg_2024::config::{Config};
+use wg_2024::network::{SourceRoutingHeader};
+use crossbeam_channel::{select_biased, unbounded};
 use crossbeam_channel::{Receiver, Sender};
 use wg_2024::packet::Fragment;
-use std::time::Duration;
 
 use std::collections::HashMap;
 use std::{fs, thread};
+
 
 #[derive(Debug)]
 struct RustDoIt {
@@ -27,7 +27,7 @@ struct RustDoIt {
     pdr: f32,
 }
 
-impl drone::Drone for RustDoIt {
+impl Drone for RustDoIt {
 
     fn new(
         id: NodeId,
@@ -37,14 +37,14 @@ impl drone::Drone for RustDoIt {
         packet_send: HashMap<NodeId, Sender<Packet>>,
         pdr: f32,
     ) -> Self {
-        return Self {
-            id: id,
-            controller_send: controller_send,
-            controller_recv: controller_recv,
-            packet_recv: packet_recv,
-            packet_send: packet_send,
-            pdr: pdr,
-        };
+        Self {
+            id,
+            controller_send,
+            controller_recv,
+            packet_recv,
+            packet_send,
+            pdr,
+        }
     }
 
     fn run(&mut self) {
@@ -259,12 +259,81 @@ impl RustDoIt {
                 
             },
 
-            PacketType::FloodRequest(_flood_request) => {
-                todo!()
+            PacketType::FloodRequest(mut flood_request) => {
+
+                if flood_request.path_trace.contains(&(self.id, NodeType::Drone)) ||
+                    self.packet_send.len() == 1 { // case in which the only neighbour is the sender of the request
+
+                    let mut routing_header = packet.routing_header.clone();
+                    routing_header.hops.reverse();
+                    routing_header.hop_index = routing_header.hops.len() - routing_header.hop_index - 1;
+                    routing_header.hop_index += 1;
+
+                    let new_flood_response = Packet {
+                        pack_type: PacketType::FloodResponse(FloodResponse {
+                            flood_id: flood_request.flood_id,
+                            path_trace: flood_request.path_trace.clone(),
+                        }),
+                        routing_header,
+                        session_id: packet.session_id,
+                    };
+                    let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                    sender.send(new_flood_response).unwrap_or_else( |e| {
+                        println!("Error in send (receiver disconnected) --> should not occur");
+                        println!("{}", e);
+                    });
+
+                } else {
+                    let sender_node_id = flood_request.path_trace.len() - 1;
+                    flood_request.path_trace.push((self.id, NodeType::Drone));
+                    for neighbour in self.packet_send {
+                        if neighbour.0 != flood_request.path_trace[sender_node_id].0 {
+                            let mut routing_header = packet.routing_header.clone();
+                            routing_header.hop_index += 1;
+                            let new_flood_request = Packet {
+                                pack_type: PacketType::FloodRequest(
+                                    FloodRequest{
+                                        flood_id: flood_request.flood_id,
+                                        initiator_id: flood_request.initiator_id,
+                                        path_trace: flood_request.path_trace.clone()
+                                    }),
+                                routing_header,
+                                session_id: packet.session_id,
+                            };
+                            let sender = self.packet_send.get(&packet.routing_header.hops[packet.routing_header.hop_index]).unwrap();
+                            sender.send(new_flood_request).unwrap_or_else( |e| {
+                                println!("Error in send (receiver disconnected) --> should not occur");
+                                println!("{}", e);
+                            });
+                        }
+                    }
+                }
             },
 
-            PacketType::FloodResponse(_flood_response) => {
-                todo!()
+            // DA CONTROLLARE
+            PacketType::FloodResponse(flood_response) => {
+                // Reverse the path_trace to send the response back
+                if let Some(&(last_hop_id, _)) = flood_response.path_trace.last() {
+                    if let Some(sender) = self.packet_send.get(&last_hop_id) {
+                        let mut routing_header = packet.routing_header.clone();
+                        routing_header.hop_index += 1;
+
+                        let new_flood_response = Packet {
+                            pack_type: PacketType::FloodResponse(FloodResponse {
+                                flood_id: flood_response.flood_id,
+                                path_trace: flood_response.path_trace.clone(),
+                            }),
+                            routing_header,
+                            session_id: packet.session_id,
+                        };
+
+                        sender.send(new_flood_response).unwrap_or_else(|e| {
+                            println!("Error sending FloodResponse to {:?}: {:?}", last_hop_id, e);
+                        });
+                    } else {
+                        println!("Error: Cannot find sender for {:?}", last_hop_id);
+                    }
+                }
             },
         }
     }
@@ -291,8 +360,9 @@ impl RustDoIt {
                 false
             },
 
-            DroneCommand::Crash => true,
+            DroneCommand::Crash => true, //todo!()
             //DroneCommand::RemoveSender(_) => {unimplemented!()}
+            // DA CONTROLLARE 
             DroneCommand::RemoveSender(node_id) => {
                 if self.packet_send.remove(&node_id).is_some() {
                     true // Ritorna true se il mittente è stato rimosso con successo
@@ -421,17 +491,13 @@ fn main() {
     //
     // println!("Stop")
 
-    let (drone_send, drone_recv) = unbounded();
-    let (controller_send, controller_recv) = unbounded();
+    let (_drone_send, drone_recv) = unbounded();
+    let (_controller_send, controller_recv) = unbounded();
     //while let Ok(_) = controller_recv.try_recv() {}
 
     let (packet_send, packet_recv) = unbounded();
     //while let Ok(_) = packet_recv.try_recv() {}
 
-    let mut controller = SimulationController {
-        drones: HashMap::from([(1, controller_send)]),
-        node_event_recv: drone_recv
-    };
 
     let mut drone = RustDoIt::new(
         1,
@@ -468,7 +534,6 @@ fn main() {
         Ok(()) => println!("Ok"),
         _ => println!("Error")
     }
-
 
     drone_thread.join().unwrap();
 }

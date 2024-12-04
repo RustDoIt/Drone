@@ -8,3 +8,6 @@ wg_2024 = { git = "https://github.com/WGL-2024/WGL_repo_2024.git", features = ["
 crossbeam-channel = "0.5.13"
 toml = "0.8.19"
 rand = "0.8"
+
+[features]
+partial_eq = []
