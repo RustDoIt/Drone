@@ -339,9 +339,7 @@ impl RustDoIt {
                 }
             },
 
-            // DA CONTROLLARE
             PacketType::FloodResponse(flood_response) => {
-                // Reverse the path_trace to send the response back
                 if let Some(&(last_hop_id, _)) = flood_response.path_trace.last() {
                     if let Some(sender) = self.packet_send.get(&last_hop_id) {
                         let mut routing_header = packet.routing_header.clone();
@@ -357,7 +355,8 @@ impl RustDoIt {
                         };
 
                         sender.send(new_flood_response).unwrap_or_else(|e| {
-                            println!("Error sending FloodResponse to {:?}: {:?}", last_hop_id, e);
+                            println!("Error in send (receiver disconnected) --> should not occur");
+                            println!("{}", e);
                         });
                     } else {
                         println!("Error: Cannot find sender for {:?}", last_hop_id);
