@@ -348,11 +348,11 @@ impl RustDoIt {
                     self.packet_send.len() == 1 { // case in which the only neighbour is the sender of the request
                     let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
                     route.reverse();
+
                     let mut routing_header = SourceRoutingHeader{
-                        hop_index: 1,
+                        hop_index: 0,
                         hops: route
                     };
-
                     let new_flood_response = Self::build_flood_response(
                         routing_header.clone(),
                         flood_request.flood_id,
@@ -360,8 +360,11 @@ impl RustDoIt {
                         packet.session_id
                     );
 
-                    let sender = self.packet_send.get(&routing_header.hops[routing_header.hop_index]).unwrap();
-                    sender.send(new_flood_response).unwrap_or_else( |e| {
+                    let sender = self.packet_send
+                        .get(&new_flood_response.routing_header.hops[new_flood_response.routing_header.hop_index])
+                        .unwrap();
+
+                    sender.send(new_flood_response.clone()).unwrap_or_else( |e| {
                         println!("Error in send (receiver disconnected) --> should not occur");
                         println!("{}", e);
                     });
