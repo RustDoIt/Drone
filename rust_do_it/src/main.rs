@@ -760,6 +760,7 @@ mod tests {
 
     #[test]
     //#[cfg(feature = "partial_eq")]
+    /// Test forward functionality of a generic packet for a drone
     pub fn generic_packet_forward(){
         let (d_send, d_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
@@ -799,17 +800,17 @@ mod tests {
         //assert_eq!(packet_received, msg);
     }
 
-    /*
-    #[test]
 
+    #[test]
     //#[cfg(feature = "partial_eq")]
+    /// Test forward functionality of a nack for a drone
     pub fn generic_nack_forward() {
         let (d1_send, d1_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
         let (_d_command_send, d_command_recv) = unbounded();
         let neighbours = HashMap::from([(1, d2_send.clone())]);
 
-        let mut drone11 = RustDoIt::new(
+        let mut drone = RustDoIt::new(
             11,
             unbounded().0,
             d_command_recv,
@@ -818,27 +819,41 @@ mod tests {
             0.0,
         );
         thread::spawn(move || {
-            drone11.run();
+            drone.run();
         });
 
-        let mut msg = create_sample_packet();
+        let mut nack = Packet {
+            pack_type: PacketType::Nack(Nack {
+                fragment_index: 1,
+                nack_type: NackType::DestinationIsDrone,
+            }),
+            routing_header: SourceRoutingHeader {
+                hop_index: 1,
+                hops: vec![12, 11, 1],
+            },
+            session_id: 1,
+        };
 
-        // "Client" sends packet to d
-        d1_send.send(msg.clone()).unwrap();
-        msg.routing_header.hop_index = 2;
+        // Hop12 sends packet to drone
+        d1_send.send(nack.clone()).unwrap();
+        nack.routing_header.hop_index += 1;
 
-        // d2 receives packet from d1
-
+        // Client receives packet from drone
         let packet_received = d2_recv.recv().unwrap();
-        println!("RECEIVED: {:?}", packet_received);
-        println!("TYPE: {:?}", packet_received.pack_type);
-        //PacketType::Nack(Nack {fragment_index: fragment.fragment_index, nack_type: NackType::DestinationIsDrone})
-
-        //assert!(matches!(packet_received.pack_type, PacketType::Nack(_)));
+        let test1_got = format!("TEST 2.0: {:?}", packet_received);
+        let test1_true = format!("TEST 2.0: {:?}", nack);
+        println!("TEST 2.0 PASSED --> {}", test1_got == test1_true);
+        if test1_got != test1_true {
+            println!("GOT {}", test1_got);
+            println!("EXPECTED {}", test1_true);
+            println!("TEST 2.0 FAILED");
+        }
+        //assert!(packet_received, nack);
     }
-    */
+
     #[test]
     //#[cfg(feature = "partial_eq")]
+    /// Checks if the packet is dropped by a drone and a Nack is sent back. The drone MUST have 100% packet drop rate, otherwise the test will fail sometimes.
     pub fn generic_fragment_drop() {
         // Client 1
         let (c_send, c_recv) = unbounded();
@@ -882,19 +897,19 @@ mod tests {
         };
 
         // Client listens for packet from the drone (Dropped Nack)
-        let test1_got = format!("TEST 2: {:?}", c_recv.recv().unwrap());
-        let test1_true = format!("TEST 2: {:?}", nack_packet);
-        println!("TEST 2.0 PASSED --> {}", test1_got == test1_true);
+        let test1_got = format!("TEST 3.0: {:?}", c_recv.recv().unwrap());
+        let test1_true = format!("TEST 3.0: {:?}", nack_packet);
+        println!("TEST 3.0 PASSED --> {}", test1_got == test1_true);
         if test1_got != test1_true {
             println!("GOT {}", test1_got);
             println!("EXPECTED {}", test1_true);
-            println!("TEST 2.0 FAILED");
+            println!("TEST 3.0 FAILED");
         }
         //assert_eq!(c_recv.recv().unwrap(), nack_packet);
     }
 
-    /// Checks if the packet is dropped by the second drone. The first drone must have 0% PDR and the second one 100% PDR, otherwise the test will fail sometimes.
     #[test]
+    /// Checks if the packet is dropped by the second drone and a Nack is sent back. The first drone must have 0% PDR and the second one 100% PDR, otherwise the test will fail sometimes.
     pub fn generic_chain_fragment_drop() {
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
@@ -909,7 +924,7 @@ mod tests {
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
-        let mut drone = RustDoIt::new(
+        let mut drone1 = RustDoIt::new(
             11,
             unbounded().0,
             d_command_recv.clone(),
@@ -930,7 +945,7 @@ mod tests {
 
         // Spawn the drone's run method in a separate thread
         thread::spawn(move || {
-            drone.run();
+            drone1.run();
         });
         thread::spawn(move || {
             drone2.run();
@@ -938,10 +953,10 @@ mod tests {
 
         let msg = create_sample_packet();
 
-        // "Client" sends packet to the drone
+        // "Client" sends packet to the drone1
         d_send.send(msg.clone()).unwrap();
 
-        // Client receive an NACK originated from 'd2'
+        // Client receive an NACK originated from drone2
         let packet_true = Packet {
             pack_type: PacketType::Nack(Nack {
                 fragment_index: 1,
@@ -953,14 +968,77 @@ mod tests {
             },
             session_id: 1,
         };
-        let test2_got = format!("TEST 2: {:?}", c_recv.recv().unwrap());
-        let test2_true = format!("TEST 2: {:?}", packet_true);
-        println!("TEST 3.1 PASSED --> {}", test2_got == test2_true);
-        if test2_got != test2_true {
-            println!("GOT {}", test2_got);
-            println!("EXPECTED {}", test2_true);
-            println!("TEST 3.1 FAILED");
+        let test1_got = format!("TEST 4.0: {:?}", c_recv.recv().unwrap());
+        let test1_true = format!("TEST 4.0: {:?}", packet_true);
+        println!("TEST 4.0 PASSED --> {}", test1_got == test1_true);
+        if test1_got != test1_true {
+            println!("GOT {}", test1_got);
+            println!("EXPECTED {}", test1_true);
+            println!("TEST 4.0 FAILED");
         }
     }
 
+    #[test]
+    /// Test forward functionality of a generic packet for a chain of drones
+    pub fn generic_chain_fragment_forward() {
+        // Client 1 channels
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d_send, d_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        // Drone 11
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv.clone(),
+            d_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+        // Drone 12
+        let neighbours12 = HashMap::from([(11, d_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            unbounded().0,
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+
+        // Spawn the drone's run method in a separate thread
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        let msg = create_sample_packet();
+
+        // Client sends packet to the drone
+        d_send.send(msg.clone()).unwrap();
+
+        // Server receives a packet with the same content of msg but with hop_index+2
+        let mut packet_true = msg.clone();
+        packet_true.routing_header.hop_index += 2;
+
+        let test1_got = format!("TEST 5.0: {:?}", s_recv.recv().unwrap());
+        let test1_true = format!("TEST 5.0: {:?}", packet_true);
+        println!("TEST 5.0 PASSED --> {}", test1_got == test1_true);
+        if test1_got != test1_true {
+            println!("GOT {}", test1_got);
+            println!("EXPECTED {}", test1_true);
+            println!("TEST 5.0 FAILED");
+        }
+    }
+
+    //pub fn generic_crash_command() {}
 }
