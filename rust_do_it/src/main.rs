@@ -893,4 +893,75 @@ mod tests {
         }
         //assert_eq!(c_recv.recv().unwrap(), nack_packet);
     }
+
+    /// Checks if the packet is dropped by the second drone. The first drone must have 0% PDR and the second one 100% PDR, otherwise the test will fail sometimes.
+    #[test]
+    pub fn generic_chain_fragment_drop() {
+        // Client 1 channels
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d_send, d_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        // Drone 11
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv.clone(),
+            d_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+        // Drone 12
+        let neighbours12 = HashMap::from([(11, d_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            unbounded().0,
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            1.0,
+        );
+
+        // Spawn the drone's run method in a separate thread
+        thread::spawn(move || {
+            drone.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        let msg = create_sample_packet();
+
+        // "Client" sends packet to the drone
+        d_send.send(msg.clone()).unwrap();
+
+        // Client receive an NACK originated from 'd2'
+        let packet_true = Packet {
+            pack_type: PacketType::Nack(Nack {
+                fragment_index: 1,
+                nack_type: NackType::Dropped,
+            }),
+            routing_header: SourceRoutingHeader {
+                hop_index: 2,
+                hops: vec![12, 11, 1],
+            },
+            session_id: 1,
+        };
+        let test2_got = format!("TEST 2: {:?}", c_recv.recv().unwrap());
+        let test2_true = format!("TEST 2: {:?}", packet_true);
+        println!("TEST 3.1 PASSED --> {}", test2_got == test2_true);
+        if test2_got != test2_true {
+            println!("GOT {}", test2_got);
+            println!("EXPECTED {}", test2_true);
+            println!("TEST 3.1 FAILED");
+        }
+    }
+
 }
