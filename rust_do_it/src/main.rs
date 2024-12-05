@@ -346,6 +346,11 @@ impl RustDoIt {
                 // initialize flood response
                 if flood_request.path_trace.contains(&(self.id, NodeType::Drone)) ||
                     self.packet_send.len() == 1 { // case in which the only neighbour is the sender of the request
+
+                    if self.packet_send.len() == 1 && !flood_request.path_trace.contains(&(self.id, NodeType::Drone)) {
+                        flood_request.path_trace.push((self.id, NodeType::Drone));
+                    }
+
                     let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
                     route.reverse();
 
