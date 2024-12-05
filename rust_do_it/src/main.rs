@@ -79,7 +79,6 @@ impl Drone for RustDoIt {
                     },
                     recv(self.packet_recv) -> packet => {
                         if let Ok(packet) = packet {
-                            println!("Ok packet_recv");
                             self.handle_packet(packet);
                         } else {
                             println!("Error receiving from packet_recv");
@@ -202,10 +201,10 @@ impl RustDoIt {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
+        println!("Drone {} received a packet of type: {:?}", self.id, packet.pack_type);
         let packet_dropped_event = DroneEvent::PacketDropped(packet.clone());
         let packet_sent_event = DroneEvent::PacketSent(packet.clone());
         let packet_shortcut_event = DroneEvent::ControllerShortcut(packet.clone());
-        println!("Received packet of type {:?}",packet.pack_type);
         match packet.pack_type {
           
             //when i receive a NACK, the routing header is reversed, so instead of -1 i perform a +1 to go to the "previous" node
@@ -426,7 +425,7 @@ impl RustDoIt {
                 }
             },
         }
-        todo!("to test")
+        // todo!("to test")
     }
 
     fn handle_packet_crash(&mut self, packet: Packet) {
