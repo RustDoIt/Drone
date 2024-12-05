@@ -17,8 +17,7 @@ use wg_2024::packet::Fragment;
 
 use std::collections::HashMap;
 use std::{fs, thread};
-
-
+use std::ops::Index;
 
 #[derive(Debug)]
 struct RustDoIt {
@@ -53,41 +52,34 @@ impl Drone for RustDoIt {
 
     fn run(&mut self) {
         println!("Drone {} is Running", self.id);
-        let mut crashed = false;
 
         loop {
-            if crashed {
-                // Handle packets specifically when the drone has crashed
-                while let Ok(packet) = self.packet_recv.try_recv() {
-                    self.handle_packet_crash(packet);
-                }
-                println!("Drone {} has crashed, exiting loop", self.id);
-                self.drop_senders();
-                // the receiver should be dropped when the break is called
-                break;
-            } else {
-                // Use select_biased to handle incoming commands and packets in normal operation
-                    select_biased! {
-                    recv(self.controller_recv) -> command => {
-                        if let Ok(command) = command {
-                            if self.handle_command(command) {
-                                crashed = true; // Mark as crashed if handle_command indicates a crash
+            // Use select_biased to handle incoming commands and packets in normal operation
+            select_biased! {
+                recv(self.controller_recv) -> command => {
+                    if let Ok(command) = command {
+                        if self.handle_command(command) {
+                            // Crashing routine
+                            while let Ok(packet) = self.packet_recv.try_recv() {
+                                self.handle_packet_crash(packet);
                             }
-                        } else {
-                            println!("Error receiving from controller_recv");
+                            println!("Drone {} has crashed, exiting loop", self.id);
+                            self.drop_senders();
+                            return;
                         }
-                    },
-                    recv(self.packet_recv) -> packet => {
-                        if let Ok(packet) = packet {
-                            self.handle_packet(packet);
-                        } else {
-                            println!("Error receiving from packet_recv");
-                        }
+                    } else {
+                        println!("Error receiving from controller_recv");
+                    }
+                },
+                recv(self.packet_recv) -> packet => {
+                    if let Ok(packet) = packet {
+                        self.handle_packet(packet);
+                    } else {
+                        println!("Error receiving from packet_recv");
                     }
                 }
             }
         }
-        todo!("to test")
     }
 }
 
@@ -154,7 +146,6 @@ impl RustDoIt {
         flood_request: FloodRequest,
         session_id: u64
     ) -> Packet {
-        routing_header.hop_index += 1;
         Packet {
             pack_type: PacketType::FloodRequest(
                 FloodRequest{
@@ -184,7 +175,6 @@ impl RustDoIt {
             session_id,
         }
     }
-
 
     fn forward_packet(
         &self,
@@ -233,7 +223,7 @@ impl RustDoIt {
                 }
             },
 
-            PacketType::Ack(ref ack) => {
+            PacketType::Ack(ack) => {
                 let next_node = packet.routing_header.hops[packet.routing_header.hop_index + 1];
 
                 if let Some(sender) = self.packet_send.get(&next_node) {
@@ -356,10 +346,12 @@ impl RustDoIt {
                 // initialize flood response
                 if flood_request.path_trace.contains(&(self.id, NodeType::Drone)) ||
                     self.packet_send.len() == 1 { // case in which the only neighbour is the sender of the request
-
-                    let mut routing_header = packet.routing_header.clone();
-                    routing_header.hops.reverse();
-                    routing_header.hop_index = routing_header.hops.len() - routing_header.hop_index - 1;
+                    let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
+                    route.reverse();
+                    let mut routing_header = SourceRoutingHeader{
+                        hop_index: 1,
+                        hops: route
+                    };
 
                     let new_flood_response = Self::build_flood_response(
                         routing_header.clone(),
@@ -373,7 +365,7 @@ impl RustDoIt {
                         println!("Error in send (receiver disconnected) --> should not occur");
                         println!("{}", e);
                     });
-                    todo!("event log to controller?")
+                    // todo!("event log to controller?")
 
                 } else { // forward flood request
                     let sender_node_id = flood_request.path_trace.len() - 1;
@@ -386,46 +378,41 @@ impl RustDoIt {
                     for neighbour in self.packet_send.clone() {
                         if neighbour.0 != flood_request.path_trace[sender_node_id].0 {
 
-                            //let sender = self.packet_send
-                            //    .get(&new_flood_request.routing_header.hops[new_flood_request.routing_header.hop_index])
-                            //    .unwrap();  this is wrong, it should be the next node in the path trace
-
                             // this should be right
                             let sender = neighbour.1.clone();
-                            sender.send(new_flood_request).unwrap_or_else( |e| {
+                            sender.send(new_flood_request.clone()).unwrap_or_else( |e| {
                                 println!("Error in send (receiver disconnected) --> should not occur");
                                 println!("{}", e);
                             });
-                            todo!("event log to controller?")
+                            // todo!("event log to controller?")
                         }
                     }
                 }
             },
 
             PacketType::FloodResponse(flood_response) => {
+                let next_node = packet.routing_header.hops[packet.routing_header.hop_index + 1];
 
-                if let Some(&(last_hop_id, _)) = flood_response.path_trace.last() {
-                    if let Some(sender) = self.packet_send.get(&last_hop_id) {
-                        let routing_header = packet.routing_header.clone();
+                if let Some(sender) = self.packet_send.get(&next_node) {
 
-                        let new_flood_response = Self::build_flood_response(
-                            routing_header.clone(),
-                            flood_response.flood_id,
-                            flood_response.path_trace.clone(),
-                            packet.session_id
-                        );
+                    let flood_response = Self::build_flood_response(
+                        packet.routing_header.clone(),
+                        flood_response.flood_id,
+                        flood_response.path_trace.clone(),
+                        packet.session_id
+                    );
 
-                        sender.send(new_flood_response).unwrap_or_else(|e| {
-                            println!("Error in send (receiver disconnected) --> should not occur");
-                            println!("{}", e);
-                        });
-                    } else {
-                        println!("Error: Cannot find sender for {:?}", last_hop_id);
-                    }
+                    self.forward_packet(sender.clone(), flood_response, packet_sent_event, packet_shortcut_event);
+
                 }
+                else {
+                    let _ = self.controller_send.send(packet_dropped_event);
+                    println!("ERROREEEEEE")
+                }
+
             },
         }
-        // todo!("to test")
+        // todo!("test flood response, request")
     }
 
     fn handle_packet_crash(&mut self, packet: Packet) {
@@ -566,93 +553,6 @@ fn parse_config(file: &str) -> Config {
 
 fn main() {
 
-    // let config = parse_config("src/config.toml");
-    //
-    // //? PACCHETTI
-    //
-    // // Da ad ogni drone un canale per scambiare pacchetti (unbounded)
-    // let mut packet_channels = HashMap::new();
-    // for drone in config.drone.iter() {
-    //     packet_channels.insert(drone.id, unbounded());
-    // }
-    //
-    // // Da ad ogni client un canale per scambiare pacchetti (unbounded)
-    // for client in config.client.iter() {
-    //     packet_channels.insert(client.id, unbounded());
-    // }
-    //
-    // // Da ad ogni server un canale per scambiare pacchetti (unbounded)
-    // for server in config.server.iter() {
-    //     packet_channels.insert(server.id, unbounded());
-    // }
-    //
-    // //? SIMULATION CONTROLLER
-    //
-    // let mut handles = Vec::new();
-    //
-    // let mut drones = HashMap::new();
-    // let (node_event_send, node_event_recv) = unbounded();
-    //
-    // for drone in config.drone.into_iter() {
-    //
-    //     // Da al controller un canale per comunicare con ogni drone
-    //     let (controller_drone_send, controller_drone_recv) = unbounded();
-    //     drones.insert(drone.id, controller_drone_send);
-    //
-    //     // Canale drone -> controller per i log
-    //     let node_event_send = node_event_send.clone();
-    //
-    //     // Clona il receiver di ogni drone
-    //     let packet_recv = packet_channels[&drone.id].1.clone();
-    //
-    //     // Prende tutti i sender verso ogni drone
-    //     let packet_send: HashMap<NodeId, Sender<Packet>> = drone
-    //         .connected_node_ids
-    //         .into_iter()
-    //         .map(|id| (id, packet_channels[&id].0.clone()))
-    //         .collect();
-    //
-    //     handles.push(thread::spawn(move || {
-    //
-    //         // Creo il drone
-    //         let mut drone = RustDoIt::new(
-    //             drone.id,
-    //             node_event_send, // Uso il canale send per inviare al controller i log
-    //             controller_drone_recv, // Do al drone il canale per ricevere i comandi del controller
-    //             packet_recv, // Do al drone il receiver per ricevere i pacchetti
-    //             packet_send, // Do al drone una hashmap per comunicare a tutti i droni COLLEGATI
-    //             drone.pdr
-    //         );
-    //
-    //         // Eseguo il drone
-    //         drone.run();
-    //     }));
-    // }
-    //
-    // // Crea il controller
-    // let mut controller = SimulationController {
-    //     drones: drones,
-    //     node_event_recv: node_event_recv
-    // };
-    //
-    // // Controller
-    // // loop {
-    // //     select_biased! {
-    // //         recv(controller.node_event_recv) -> event => {
-    // //             break;
-    // //         },
-    // //     }
-    // // }
-    //
-    // controller.crash_all();
-    //
-    // // Aspetta fino a quando tutti i thread non terminano
-    // while let Some(handle) = handles.pop() {
-    //     handle.join().unwrap();
-    // }
-    //
-    // println!("Stop")
-
     let (_drone_send, drone_recv) = unbounded::<Packet>();
     let (_controller_send, controller_recv) = unbounded();
     //while let Ok(_) = controller_recv.try_recv() {}
@@ -705,6 +605,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use wg_2024::packet::Fragment;
+    use wg_2024::packet::PacketType::{FloodRequest, FloodResponse};
     use super::*;
     fn create_sample_packet() -> Packet {
         Packet {
@@ -783,7 +684,7 @@ mod tests {
 
         // "Client" sends packet to d
         d_send.send(msg.clone()).unwrap();
-        msg.routing_header.hop_index = 2;
+        msg.routing_header.hop_index += 1;
 
         // d2 receives packet from d1
         let packet_received = d2_recv.recv().unwrap();
@@ -1039,6 +940,363 @@ mod tests {
             println!("TEST 5.0 FAILED");
         }
     }
+
+    #[test]
+    /// Test crash all drones
+    fn test_crash_all() {
+
+        let config = parse_config("src/config.toml");
+
+        // Da ad ogni drone un canale per scambiare pacchetti (unbounded)
+        let mut packet_channels = HashMap::new();
+        for drone in config.drone.iter() {
+            packet_channels.insert(drone.id, unbounded());
+        }
+
+        // Da ad ogni client un canale per scambiare pacchetti (unbounded)
+        for client in config.client.iter() {
+            packet_channels.insert(client.id, unbounded());
+        }
+
+        // Da ad ogni server un canale per scambiare pacchetti (unbounded)
+        for server in config.server.iter() {
+            packet_channels.insert(server.id, unbounded());
+        }
+
+        let mut handles = Vec::new();
+
+        let mut drones = HashMap::new();
+        let (node_event_send, node_event_recv) = unbounded();
+
+        for drone in config.drone.into_iter() {
+
+            // Da al controller un canale per comunicare con ogni drone
+            let (controller_drone_send, controller_drone_recv) = unbounded();
+            drones.insert(drone.id, controller_drone_send);
+
+            // Canale drone -> controller per i log
+            let node_event_send = node_event_send.clone();
+
+            // Clona il receiver di ogni drone
+            let packet_recv = packet_channels[&drone.id].1.clone();
+
+            // Prende tutti i sender verso ogni drone
+            let packet_send: HashMap<NodeId, Sender<Packet>> = drone
+                .connected_node_ids
+                .into_iter()
+                .map(|id| (id, packet_channels[&id].0.clone()))
+                .collect();
+
+            // Create the drone
+            let mut new_drone = RustDoIt::new(
+                drone.id,
+                node_event_send, // Uso il canale send per inviare al controller i log
+                controller_drone_recv, // Do al drone il canale per ricevere i comandi del controller
+                packet_recv, // Do al drone il receiver per ricevere i pacchetti
+                packet_send, // Do al drone una hashmap per comunicare a tutti i droni COLLEGATI
+                drone.pdr
+            );
+            handles.push(thread::spawn(move || {
+                // Execute the drone
+                new_drone.run();
+            }));
+        }
+
+        // Crea il controller
+        let mut controller = SimulationController {
+            drones,
+            node_event_recv
+        };
+
+        controller.crash_all();
+
+        // Waits until all threads end
+        while let Some(handle) = handles.pop() {
+            handle.join().unwrap();
+        }
+
+        println!("TEST 6.0 PASSED --> true")
+    }
+
+    #[test]
+    /// Test the forward of a flood request coming from drone1, forwarded to drone2 and drone3
+    pub fn flood_request_forward() {
+        // Client 1 channels
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d_send11, d11_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // Drone 13
+        let (d13_send, d13_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        // Drone 11
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (13, d13_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv.clone(),
+            d11_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+        // Drone 12
+        let neighbours12 = HashMap::from([(11, d_send11.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            unbounded().0,
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+        let neighbours13 = HashMap::from([(11, d_send11.clone()), (21, s_send.clone())]);
+        let mut drone3 = RustDoIt::new(
+            13,
+            unbounded().0,
+            d_command_recv.clone(),
+            d13_recv.clone(),
+            neighbours13,
+            0.0,
+        );
+
+        // Spawn the drone's run method in a separate thread
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+        thread::spawn(move || {
+            drone3.run();
+        });
+
+        let srh = create_custom_routing_header( // useless in the flood_request
+            0,
+            vec![],
+        );
+
+        let flood_request = create_custom_packet(
+            srh,
+            FloodRequest(
+                wg_2024::packet::FloodRequest{
+                flood_id: 0,
+                initiator_id: 1,
+                path_trace: vec![(1, NodeType::Client)],
+            }),
+            0,
+        );
+
+        // Client sends packet to the drone1
+        d_send11.send(flood_request.clone()).unwrap();
+
+        // Server receives a packet with the same content of msg but with hop_index+2
+        let mut packet_true_2 = flood_request.clone();
+        packet_true_2.pack_type = FloodRequest(
+            wg_2024::packet::FloodRequest{
+                flood_id: 0,
+                initiator_id: 1,
+                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone)],
+            }
+        );
+
+        let mut packet_true_3 = flood_request.clone();
+        packet_true_3.pack_type = FloodRequest(
+            wg_2024::packet::FloodRequest{
+                flood_id: 0,
+                initiator_id: 1,
+                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (13, NodeType::Drone)],
+            }
+        );
+
+        let test2_got = format!("TEST 7.0: {:?}", s_recv.recv().unwrap());
+        let test2_true = format!("TEST 7.0: {:?}", packet_true_2);
+        let test3_got = format!("TEST 7.1: {:?}", s_recv.recv().unwrap());
+        let test3_true = format!("TEST 7.1: {:?}", packet_true_3);
+        println!("TEST 7.0 PASSED --> {}", test2_got == test2_true || test2_got == test3_true);
+        println!("TEST 7.1 PASSED --> {}", test3_got == test2_true || test3_got == test3_true);
+        if !(test2_got == test2_true || test2_got == test3_true) {
+            println!("GOT {}", test2_got);
+            println!("EXPECTED {}", test2_true);
+            println!("TEST 7.0 FAILED");
+        }
+        if !(test3_got == test2_true || test3_got == test3_true) {
+            println!("GOT {}", test3_got);
+            println!("EXPECTED {}", test3_true);
+            println!("TEST 7.1 FAILED");
+        }
+    }
+
+    #[test]
+    /// Test the forward of a flood response coming from drone2, forwarded to drone1, forwarded again
+    pub fn flood_response_forward() {
+        // Client 1 channels
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d_send, d_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        // Drone 11
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv.clone(),
+            d_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+        // Drone 12
+        let neighbours12 = HashMap::from([(11, d_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            unbounded().0,
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+
+        // Spawn the drone's run method in a separate thread
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        let srh = create_custom_routing_header( // to use in flood_response
+            1,
+            vec![21, 12, 11, 1],
+        );
+
+
+        let flood_response = create_custom_packet(
+            srh,
+            FloodResponse(
+                wg_2024::packet::FloodResponse{
+                    flood_id: 0,
+                    path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone), (21, NodeType::Server)],
+                }
+            ),
+            0,
+        );
+
+        // Client sends packet to the drone
+        d12_send.send(flood_response.clone()).unwrap();
+
+        // Server receives a packet with the same content of msg but with hop_index+2
+        let mut packet_true = flood_response.clone();
+        packet_true.routing_header.hop_index += 2;
+
+        let test1_got = format!("TEST 8.0: {:?}", c_recv.recv().unwrap());
+        let test1_true = format!("TEST 8.0: {:?}", packet_true);
+        println!("TEST 8.0 PASSED --> {}", test1_got == test1_true);
+        if test1_got != test1_true {
+            println!("GOT {}", test1_got);
+            println!("EXPECTED {}", test1_true);
+            println!("TEST 8.0 FAILED");
+        }
+    }
+
+    #[test]
+    /// Test the generation of a flood response due to an isolated drone (only neighbour the one who sent the flood request)
+    pub fn flood_response_isolation() {
+        // Client 1 channels
+        let (c_send, c_recv) = unbounded();
+        // Drone 11
+        let (d_send, d_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        // Drone 11
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            unbounded().0,
+            d_command_recv.clone(),
+            d_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+        // Drone 12
+        let neighbours12 = HashMap::from([(11, d_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            unbounded().0,
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+
+        // Spawn the drone's run method in a separate thread
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+
+        let srh = create_custom_routing_header( // to use in flood_response
+            0,
+            vec![],
+        );
+
+        let flood_request = create_custom_packet(
+            srh,
+            FloodRequest(
+                wg_2024::packet::FloodRequest{
+                    flood_id: 0,
+                    initiator_id: 1,
+                    path_trace: vec![(1, NodeType::Client)],
+                }),
+            0,
+        );
+
+        // Client sends packet to the drone
+        d_send.send(flood_request.clone()).unwrap();
+
+        let srh = create_custom_routing_header(
+            2,
+            vec![12, 11, 1],
+        );
+        let packet_true = create_custom_packet(
+            srh,
+            FloodResponse(
+                wg_2024::packet::FloodResponse{
+                    flood_id: 0,
+                    path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone)],
+                }
+            ),
+            0,
+        );
+
+        let test1_got = format!("TEST 9.0: {:?}", c_recv.recv().unwrap());
+        let test1_true = format!("TEST 9.0: {:?}", packet_true);
+        println!("TEST 9.0 PASSED --> {}", test1_got == test1_true);
+        if test1_got != test1_true {
+            println!("GOT {}", test1_got);
+            println!("EXPECTED {}", test1_true);
+            println!("TEST 9.0 FAILED");
+        }
+    }
+
+    #[test]
+    /// Test the generation of a flood response due to an already visited hop
+    pub fn flood_response_visited() {}
 
     //pub fn generic_crash_command() {}
 }
