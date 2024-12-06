@@ -15,7 +15,7 @@ use crossbeam_channel::{select_biased, unbounded};
 use crossbeam_channel::{Receiver, Sender};
 use wg_2024::packet::Fragment;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{fs, thread};
 use std::ops::Index;
 
@@ -26,7 +26,7 @@ struct RustDoIt {
     controller_recv: Receiver<DroneCommand>,            // Used to receive commands from the controller (sender is in the controller)
     packet_recv: Receiver<Packet>,                      // The receiving end of the channel for receiving packets from drones
     packet_send: HashMap<NodeId, Sender<Packet>>,       // Mapping of drone IDs to senders, allowing packets to be sent to specific drones
-    
+    flood_session: HashSet<(u64,NodeId)>,
     pdr: f32,
 }
 
@@ -46,6 +46,7 @@ impl Drone for RustDoIt {
             controller_recv,
             packet_recv,
             packet_send,
+            flood_session: HashSet::new(),
             pdr,
         }
     }
@@ -344,11 +345,12 @@ impl RustDoIt {
             PacketType::FloodRequest(mut flood_request) => {
 
                 // initialize flood response
-                if flood_request.path_trace.contains(&(self.id, NodeType::Drone)) ||
-                    self.packet_send.len() == 1 { // case in which the only neighbour is the sender of the request
+                //if this drone has already received this flood request, send a flood response and do not forward it
+                if self.flood_session.contains(&(flood_request.flood_id, flood_request.initiator_id)) ||
+                    self.packet_send.len() == 1 {
 
-                    if !flood_request.path_trace.contains(&(self.id, NodeType::Drone)) {
-                        flood_request.path_trace.push((self.id, NodeType::Drone));
+                    if !flood_request.path_trace.contains(&(self.id, NodeType::Drone)){
+                        flood_request.path_trace.push((self.id, NodeType::Drone))
                     }
 
                     let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
@@ -377,6 +379,7 @@ impl RustDoIt {
                     // TODO: event log to controller?
 
                 } else { // forward flood request
+                    self.flood_session.insert((flood_request.flood_id, flood_request.initiator_id));
                     let sender_node_id = flood_request.path_trace.len() - 1;
                     flood_request.path_trace.push((self.id, NodeType::Drone));
                     let new_flood_request = Self::build_flood_request(
