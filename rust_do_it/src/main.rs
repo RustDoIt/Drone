@@ -22,11 +22,11 @@ use std::ops::Index;
 #[derive(Debug)]
 struct RustDoIt {
     id: NodeId,
-    controller_send: Sender<DroneEvent>,                 // Used to send events to the controller (receiver is in the controller)
+    controller_send: Sender<DroneEvent>,                // Used to send events to the controller (receiver is in the controller)
     controller_recv: Receiver<DroneCommand>,            // Used to receive commands from the controller (sender is in the controller)
     packet_recv: Receiver<Packet>,                      // The receiving end of the channel for receiving packets from drones
     packet_send: HashMap<NodeId, Sender<Packet>>,       // Mapping of drone IDs to senders, allowing packets to be sent to specific drones
-
+    
     pdr: f32,
 }
 
@@ -374,7 +374,7 @@ impl RustDoIt {
                         println!("Error in send (receiver disconnected) --> should not occur");
                         println!("{}", e);
                     });
-                    // todo!("event log to controller?")
+                    // TODO: event log to controller?
 
                 } else { // forward flood request
                     let sender_node_id = flood_request.path_trace.len() - 1;
@@ -393,7 +393,7 @@ impl RustDoIt {
                                 println!("Error in send (receiver disconnected) --> should not occur");
                                 println!("{}", e);
                             });
-                            // todo!("event log to controller?")
+                            // TODO: event log to controller?
                         }
                     }
                 }
@@ -421,7 +421,7 @@ impl RustDoIt {
 
             },
         }
-        // todo!("test flood response, request")
+        // TODO: test flood response, request
     }
 
     fn handle_packet_crash(&mut self, packet: Packet) {
@@ -562,7 +562,7 @@ fn parse_config(file: &str) -> Config {
 
 fn main() {
 
-    let (_drone_send, drone_recv) = unbounded::<Packet>();
+    let (_drone_send, _drone_recv) = unbounded::<Packet>();
     let (_controller_send, controller_recv) = unbounded();
     //while let Ok(_) = controller_recv.try_recv() {}
 
@@ -703,8 +703,12 @@ mod tests {
         let test2_got = format!("TEST 1.1: {}", packet_received.routing_header.hop_index);
         let test2_true = format!("TEST 1.1: 2");
 
-        println!("TEST 1.0 PASSED --> {}", test1_got == test1_true);
-        println!("TEST 1.1 PASSED --> {}", test2_got == test2_true);
+        assert_eq!(test1_true, test1_got, "TEST 1.0 PASSED --> {}", test1_got == test1_true);
+        assert_eq!(test2_true, test2_got, "TEST 1.1 PASSED --> {}", test2_got == test2_true);
+
+
+        // println!("TEST 1.0 PASSED --> {}", test1_got == test1_true);
+        // println!("TEST 1.1 PASSED --> {}", test2_got == test2_true);
 
         //assert_eq!(packet_received.routing_header.hop_index, 2);
         //assert_eq!(packet_received, msg);
@@ -752,12 +756,14 @@ mod tests {
         let packet_received = d2_recv.recv().unwrap();
         let test1_got = format!("TEST 2.0: {:?}", packet_received);
         let test1_true = format!("TEST 2.0: {:?}", nack);
-        println!("TEST 2.0 PASSED --> {}", test1_got == test1_true);
+
+        assert_eq!(test1_got, test1_true, "TEST 2.0 PASSED --> {}", test1_got == test1_true);
+        /*println!("TEST 2.0 PASSED --> {}", test1_got == test1_true);
         if test1_got != test1_true {
             println!("GOT {}", test1_got);
             println!("EXPECTED {}", test1_true);
             println!("TEST 2.0 FAILED");
-        }
+        }*/
         //assert!(packet_received, nack);
     }
 
@@ -809,12 +815,8 @@ mod tests {
         // Client listens for packet from the drone (Dropped Nack)
         let test1_got = format!("TEST 3.0: {:?}", c_recv.recv().unwrap());
         let test1_true = format!("TEST 3.0: {:?}", nack_packet);
-        println!("TEST 3.0 PASSED --> {}", test1_got == test1_true);
-        if test1_got != test1_true {
-            println!("GOT {}", test1_got);
-            println!("EXPECTED {}", test1_true);
-            println!("TEST 3.0 FAILED");
-        }
+        assert_eq!(test1_got, test1_true, "TEST 3.0 PASSED --> {}", test1_got == test1_true);
+
         //assert_eq!(c_recv.recv().unwrap(), nack_packet);
     }
 
@@ -880,12 +882,13 @@ mod tests {
         };
         let test1_got = format!("TEST 4.0: {:?}", c_recv.recv().unwrap());
         let test1_true = format!("TEST 4.0: {:?}", packet_true);
-        println!("TEST 4.0 PASSED --> {}", test1_got == test1_true);
-        if test1_got != test1_true {
-            println!("GOT {}", test1_got);
-            println!("EXPECTED {}", test1_true);
-            println!("TEST 4.0 FAILED");
-        }
+        assert_eq!(test1_got, test1_true, "TEST 4.0 PASSED --> {}", test1_got == test1_true);
+        // println!("TEST 4.0 PASSED --> {}", test1_got == test1_true);
+        // if test1_got != test1_true {
+        //    println!("GOT {}", test1_got);
+        //    println!("EXPECTED {}", test1_true);
+        //    println!("TEST 4.0 FAILED");
+        //}
     }
 
     #[test]
@@ -942,12 +945,14 @@ mod tests {
 
         let test1_got = format!("TEST 5.0: {:?}", s_recv.recv().unwrap());
         let test1_true = format!("TEST 5.0: {:?}", packet_true);
-        println!("TEST 5.0 PASSED --> {}", test1_got == test1_true);
+
+        assert_eq!(test1_got, test1_true, "TEST 5.0 PASSED --> {}", test1_got == test1_true);
+        /*println!("TEST 5.0 PASSED --> {}", test1_got == test1_true);
         if test1_got != test1_true {
             println!("GOT {}", test1_got);
             println!("EXPECTED {}", test1_true);
             println!("TEST 5.0 FAILED");
-        }
+        }*/
     }
 
     #[test]
@@ -1126,7 +1131,9 @@ mod tests {
         let test2_true = format!("TEST 7.0: {:?}", packet_true_2);
         let test3_got = format!("TEST 7.1: {:?}", s_recv.recv().unwrap());
         let test3_true = format!("TEST 7.1: {:?}", packet_true_3);
-        println!("TEST 7.0 PASSED --> {}", test2_got == test2_true || test2_got == test3_true);
+        assert_eq!(test2_got, test2_true, "TEST 7.0 PASSED --> {}", test2_got == test2_true);
+        assert_eq!(test3_got, test3_true, "TEST 7.1 PASSED --> {}", test3_got == test3_true);
+        /*println!("TEST 7.0 PASSED --> {}", test2_got == test2_true || test2_got == test3_true);
         println!("TEST 7.1 PASSED --> {}", test3_got == test2_true || test3_got == test3_true);
         if !(test2_got == test2_true || test2_got == test3_true) {
             println!("GOT {}", test2_got);
@@ -1137,7 +1144,7 @@ mod tests {
             println!("GOT {}", test3_got);
             println!("EXPECTED {}", test3_true);
             println!("TEST 7.1 FAILED");
-        }
+        }*/
     }
 
     #[test]
@@ -1209,12 +1216,13 @@ mod tests {
 
         let test1_got = format!("TEST 8.0: {:?}", c_recv.recv().unwrap());
         let test1_true = format!("TEST 8.0: {:?}", packet_true);
-        println!("TEST 8.0 PASSED --> {}", test1_got == test1_true);
+        assert_eq!(test1_got, test1_true, "TEST 8.0 PASSED --> {}", test1_got == test1_true);
+        /*println!("TEST 8.0 PASSED --> {}", test1_got == test1_true);
         if test1_got != test1_true {
             println!("GOT {}", test1_got);
             println!("EXPECTED {}", test1_true);
             println!("TEST 8.0 FAILED");
-        }
+        }*/
     }
 
     #[test]
@@ -1295,12 +1303,13 @@ mod tests {
 
         let test1_got = format!("TEST 9.0: {:?}", c_recv.recv().unwrap());
         let test1_true = format!("TEST 9.0: {:?}", packet_true);
-        println!("TEST 9.0 PASSED --> {}", test1_got == test1_true);
+        assert_eq!(test1_true, test1_got, "TEST 9.0 PASSED --> {}", test1_got == test1_true);
+        /*println!("TEST 9.0 PASSED --> {}", test1_got == test1_true);
         if test1_got != test1_true {
             println!("GOT {}", test1_got);
             println!("EXPECTED {}", test1_true);
             println!("TEST 9.0 FAILED");
-        }
+        }*/
     }
 
     #[test]
