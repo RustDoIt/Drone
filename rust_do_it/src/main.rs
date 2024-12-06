@@ -347,7 +347,7 @@ impl RustDoIt {
                 if flood_request.path_trace.contains(&(self.id, NodeType::Drone)) ||
                     self.packet_send.len() == 1 { // case in which the only neighbour is the sender of the request
 
-                    if self.packet_send.len() == 1 && !flood_request.path_trace.contains(&(self.id, NodeType::Drone)) {
+                    if !flood_request.path_trace.contains(&(self.id, NodeType::Drone)) {
                         flood_request.path_trace.push((self.id, NodeType::Drone));
                     }
 
@@ -358,6 +358,7 @@ impl RustDoIt {
                         hop_index: 0,
                         hops: route
                     };
+
                     let new_flood_response = Self::build_flood_response(
                         routing_header.clone(),
                         flood_request.flood_id,
