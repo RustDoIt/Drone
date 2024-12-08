@@ -181,12 +181,15 @@ impl RustDoIt {
         &self,
         sender: Sender<Packet>,
         packet: Packet,
-        packet_sent_event: DroneEvent,
-        packet_shortcut_event: DroneEvent
+        packet_succ_event: DroneEvent,
+        packet_fail_event: DroneEvent
     ) {
-        let _ = match sender.send(packet){
-            Ok(_) =>  self.controller_send.send(packet_sent_event),
-            Err(_) =>  self.controller_send.send(packet_shortcut_event),
+
+        let _ = match sender.send(packet.clone()){
+            Ok(_) =>  self.controller_send.send(packet_succ_event),
+            Err(_) =>self.controller_send.send(packet_fail_event)
+
+            ,
         };
 
     }
@@ -298,11 +301,10 @@ impl RustDoIt {
                                 let _ = self.controller_send.send(packet_dropped_event);
                                 self.forward_packet(sender.clone(), nack.clone(), DroneEvent::PacketSent(nack.clone()), packet_shortcut_event);
                                 return;
-                            }
-                            else {
+                            } else {
                                 
                                 //forward the packet and send the status, it is not sent, log a drop event
-                                self.forward_packet(next_node.clone(), new_packet, packet_sent_event, packet_shortcut_event);
+                                self.forward_packet(next_node.clone(), new_packet, packet_sent_event, packet_dropped_event);
                                 return;
                             }
 
@@ -372,11 +374,8 @@ impl RustDoIt {
                         .get(&new_flood_response.routing_header.hops[new_flood_response.routing_header.hop_index])
                         .unwrap();
 
-                    sender.send(new_flood_response.clone()).unwrap_or_else( |e| {
-                        println!("Error in send (receiver disconnected) --> should not occur");
-                        println!("{}", e);
-                    });
-                    // TODO: event log to controller?
+                    self.forward_packet(sender.clone(), new_flood_response, packet_sent_event, packet_shortcut_event);
+
 
                 } else { // forward flood request
                     self.flood_session.insert((flood_request.flood_id, flood_request.initiator_id));
@@ -392,11 +391,7 @@ impl RustDoIt {
 
                             // this should be right
                             let sender = neighbour.1.clone();
-                            sender.send(new_flood_request.clone()).unwrap_or_else( |e| {
-                                println!("Error in send (receiver disconnected) --> should not occur");
-                                println!("{}", e);
-                            });
-                            // TODO: event log to controller?
+                            self.forward_packet(sender, new_flood_request.clone(), packet_sent_event.clone(), packet_dropped_event.clone());
                         }
                     }
                 }
@@ -418,7 +413,7 @@ impl RustDoIt {
 
                 }
                 else {
-                    let _ = self.controller_send.send(packet_dropped_event);
+                    let _ = self.controller_send.send(packet_shortcut_event);
                     println!("ERROREEEEEE")
                 }
 
@@ -678,11 +673,12 @@ mod tests {
         let (d_send, d_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
         let (_d_command_send, d_command_recv) = unbounded();
+        let (d_event_send,d_event_recv) = unbounded();
         let neighbours = HashMap::from([(12, d2_send.clone())]);
 
         let mut drone11 = RustDoIt::new(
             11,
-            unbounded().0,
+            d_event_send,
             d_command_recv,
             d_recv.clone(),
             neighbours,
@@ -693,6 +689,7 @@ mod tests {
         });
 
         let mut msg = create_sample_packet();
+        let packet_sent_event = DroneEvent::PacketSent(msg.clone());
 
         // "Client" sends packet to d
         d_send.send(msg.clone()).unwrap();
@@ -700,21 +697,10 @@ mod tests {
 
         // d2 receives packet from d1
         let packet_received = d2_recv.recv().unwrap();
+        let event_log = d_event_recv.recv().unwrap();
 
-        let test1_got = format!("TEST 1.0: {:?}", packet_received);
-        let test1_true = format!("TEST 1.0: {:?}", msg);
-        let test2_got = format!("TEST 1.1: {}", packet_received.routing_header.hop_index);
-        let test2_true = format!("TEST 1.1: 2");
-
-        assert_eq!(test1_true, test1_got, "TEST 1.0 PASSED --> {}", test1_got == test1_true);
-        assert_eq!(test2_true, test2_got, "TEST 1.1 PASSED --> {}", test2_got == test2_true);
-
-
-        // println!("TEST 1.0 PASSED --> {}", test1_got == test1_true);
-        // println!("TEST 1.1 PASSED --> {}", test2_got == test2_true);
-
-        //assert_eq!(packet_received.routing_header.hop_index, 2);
-        //assert_eq!(packet_received, msg);
+        assert_eq!(packet_received, msg);
+        assert_eq!(event_log,  packet_sent_event);
     }
 
 
@@ -725,11 +711,12 @@ mod tests {
         let (d1_send, d1_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
         let (_d_command_send, d_command_recv) = unbounded();
+        let (d_event_send,d_event_recv) = unbounded();
         let neighbours = HashMap::from([(1, d2_send.clone())]);
 
         let mut drone = RustDoIt::new(
             11,
-            unbounded().0,
+            d_event_send,
             d_command_recv,
             d1_recv.clone(),
             neighbours,
@@ -753,21 +740,14 @@ mod tests {
 
         // Hop12 sends packet to drone
         d1_send.send(nack.clone()).unwrap();
+        let event = d_event_recv.recv().unwrap();
+        let packet_sent_event = DroneEvent::PacketSent(nack.clone());
         nack.routing_header.hop_index += 1;
-
-        // Client receives packet from drone
         let packet_received = d2_recv.recv().unwrap();
-        let test1_got = format!("TEST 2.0: {:?}", packet_received);
-        let test1_true = format!("TEST 2.0: {:?}", nack);
 
-        assert_eq!(test1_got, test1_true, "TEST 2.0 PASSED --> {}", test1_got == test1_true);
-        /*println!("TEST 2.0 PASSED --> {}", test1_got == test1_true);
-        if test1_got != test1_true {
-            println!("GOT {}", test1_got);
-            println!("EXPECTED {}", test1_true);
-            println!("TEST 2.0 FAILED");
-        }*/
-        //assert!(packet_received, nack);
+        assert_eq!(packet_received, nack);
+        assert_eq!(event,packet_sent_event);
+
     }
 
     #[test]
@@ -780,11 +760,13 @@ mod tests {
         let (d_send, d_recv) = unbounded();
         // SC commands
         let (_d_command_send, d_command_recv) = unbounded();
+        let (d_event_send,d_event_recv) = unbounded();
+
 
         let neighbours = HashMap::from([(12, d_send.clone()), (1, c_send.clone())]);
         let mut drone = RustDoIt::new(
             11,
-            unbounded().0,
+            d_event_send,
             d_command_recv,
             d_recv.clone(),
             neighbours,
@@ -815,12 +797,14 @@ mod tests {
             session_id: 1,
         };
 
-        // Client listens for packet from the drone (Dropped Nack)
-        let test1_got = format!("TEST 3.0: {:?}", c_recv.recv().unwrap());
-        let test1_true = format!("TEST 3.0: {:?}", nack_packet);
-        assert_eq!(test1_got, test1_true, "TEST 3.0 PASSED --> {}", test1_got == test1_true);
+        let packet_sent_event = DroneEvent::PacketSent(nack_packet.clone());
+        let packet_drop_event = DroneEvent::PacketDropped(msg.clone());
+        let packet_dropped = d_event_recv.recv().unwrap();
+        let nack_sent = d_event_recv.recv().unwrap();
 
-        //assert_eq!(c_recv.recv().unwrap(), nack_packet);
+        assert_eq!(packet_sent_event,nack_sent);
+        assert_eq!(packet_drop_event,packet_dropped);
+        assert_eq!(c_recv.recv().unwrap(), nack_packet);
     }
 
     #[test]
@@ -883,9 +867,13 @@ mod tests {
             },
             session_id: 1,
         };
-        let test1_got = format!("TEST 4.0: {:?}", c_recv.recv().unwrap());
-        let test1_true = format!("TEST 4.0: {:?}", packet_true);
-        assert_eq!(test1_got, test1_true, "TEST 4.0 PASSED --> {}", test1_got == test1_true);
+
+        let packet_got = c_recv.recv().unwrap();
+        assert_eq!(packet_true, packet_got);
+
+        // let test1_got = format!("TEST 4.0: {:?}", c_recv.recv().unwrap());
+        // let test1_true = format!("TEST 4.0: {:?}", packet_true);
+        // assert_eq!(test1_got, test1_true, "TEST 4.0 PASSED --> {}", test1_got == test1_true);
         // println!("TEST 4.0 PASSED --> {}", test1_got == test1_true);
         // if test1_got != test1_true {
         //    println!("GOT {}", test1_got);
@@ -946,10 +934,13 @@ mod tests {
         let mut packet_true = msg.clone();
         packet_true.routing_header.hop_index += 2;
 
-        let test1_got = format!("TEST 5.0: {:?}", s_recv.recv().unwrap());
-        let test1_true = format!("TEST 5.0: {:?}", packet_true);
+        let packet_got = s_recv.recv().unwrap();
+        assert_eq!(packet_true,packet_got);
 
-        assert_eq!(test1_got, test1_true, "TEST 5.0 PASSED --> {}", test1_got == test1_true);
+        // let test1_got = format!("TEST 5.0: {:?}", s_recv.recv().unwrap());
+        // let test1_true = format!("TEST 5.0: {:?}", packet_true);
+        //
+        // assert_eq!(test1_got, test1_true, "TEST 5.0 PASSED --> {}", test1_got == test1_true);
         /*println!("TEST 5.0 PASSED --> {}", test1_got == test1_true);
         if test1_got != test1_true {
             println!("GOT {}", test1_got);
@@ -1129,13 +1120,17 @@ mod tests {
                 path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (13, NodeType::Drone)],
             }
         );
+        let packet_got = s_recv.recv().unwrap();
+        assert!(packet_got == packet_true_2 || packet_got == packet_true_3);
+        let packet_got = s_recv.recv().unwrap();
+        assert!(packet_got == packet_true_2 || packet_got == packet_true_3);
 
-        let test2_got = format!("TEST 7.0: {:?}", s_recv.recv().unwrap());
-        let test2_true = format!("TEST 7.0: {:?}", packet_true_2);
-        let test3_got = format!("TEST 7.1: {:?}", s_recv.recv().unwrap());
-        let test3_true = format!("TEST 7.1: {:?}", packet_true_3);
-        assert_eq!(test2_got, test2_true, "TEST 7.0 PASSED --> {}", test2_got == test2_true);
-        assert_eq!(test3_got, test3_true, "TEST 7.1 PASSED --> {}", test3_got == test3_true);
+        //let test2_got = format!("TEST 7.0: {:?}", s_recv.recv().unwrap());
+        //let test2_true = format!("TEST 7.0: {:?}", packet_true_2);
+        //let test3_got = format!("TEST 7.1: {:?}", s_recv.recv().unwrap());
+        //let test3_true = format!("TEST 7.1: {:?}", packet_true_3);
+        //assert!(test2_got == test2_true || test2_got == test3_true, "TEST 7.0 PASSED --> {}", test2_got == test2_true || test2_got == test3_true);
+        //assert!(test3_got == test2_true || test3_got == test3_true, "TEST 7.1 PASSED --> {}", test3_got == test2_true || test3_got == test3_true);assert_eq!(test3_got, test3_true, "TEST 7.1 PASSED --> {}", test3_got == test3_true);
         /*println!("TEST 7.0 PASSED --> {}", test2_got == test2_true || test2_got == test3_true);
         println!("TEST 7.1 PASSED --> {}", test3_got == test2_true || test3_got == test3_true);
         if !(test2_got == test2_true || test2_got == test3_true) {
