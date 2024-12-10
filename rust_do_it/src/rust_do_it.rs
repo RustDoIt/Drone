@@ -368,8 +368,7 @@ impl RustDoIt {
         }
     }
 
-    fn generate_flood_response(&mut self, flood_request: FloodRequest, session_id: u64){
-
+    fn generate_flood_response(&mut self, flood_request: FloodRequest, session_id: u64) {
         let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
         route.reverse();
 
@@ -379,34 +378,40 @@ impl RustDoIt {
         };
 
         let mut srh = SourceRoutingHeader::new(route, 0);
-        let next_hop = &srh.next_hop().unwrap();
-        srh.increase_hop_index();
-        let flood_response_packet = Packet::new_flood_response(
-            srh,
-            session_id,
-            flood_response
-        );
-
-        match self.packet_send.get(next_hop) {
-            Some(sender) => {
-                let _ = match sender.send(flood_response_packet.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(flood_response_packet)),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(flood_response_packet)),
-                };
-            },
+        match &srh.next_hop() {
             None => {
-                self.generate_nack(NackType::ErrorInRouting(*next_hop), flood_response_packet.routing_header, session_id);
+                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                return;
+            },
+            Some(next_hop) => {
+                srh.increase_hop_index();
+                let flood_response_packet = Packet::new_flood_response(
+                    srh,
+                    session_id,
+                    flood_response
+                );
+
+                match self.packet_send.get(next_hop) {
+                    Some(sender) => {
+                        let _ = match sender.send(flood_response_packet.clone()) {
+                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(flood_response_packet)),
+                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(flood_response_packet)),
+                        };
+                    },
+                    None => {
+                        self.generate_nack(NackType::ErrorInRouting(*next_hop), flood_response_packet.routing_header, session_id);
+                    }
+                }
             }
         }
     }
 
     fn handle_flood_response(
-        &mut self,
-        flood_response: FloodResponse,
-        mut srh: SourceRoutingHeader,
-        session_id: u64,
-    ){
-
+            &mut self,
+            flood_response: FloodResponse,
+            mut srh: SourceRoutingHeader,
+            session_id: u64,
+        ) {
         let current_hop = srh.current_hop().unwrap();
         if current_hop != self.id {
             self.generate_nack(
@@ -417,7 +422,7 @@ impl RustDoIt {
             return;
         }
 
-        match &srh.next_hop(){
+        match &srh.next_hop() {
             None => {
                 self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
                 return;
