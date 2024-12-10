@@ -105,35 +105,34 @@ impl RustDoIt {
     }
 
     fn handle_packet(&mut self, packet: Packet) {
+
+
         match packet.pack_type {
-            PacketType::Ack(ack) => {
-                let current_hop = packet.routing_header.current_hop().unwrap();
-                if current_hop == self.id {
-                    self.handle_ack(
-                        ack.fragment_index,
-                        packet.routing_header,
-                        packet.session_id
-                    );
-                } else {
-                    self.generate_nack(
-                        NackType::UnexpectedRecipient(current_hop),
-                        packet.routing_header,
-                        packet.session_id
-                    );
-                }
-            },
-            PacketType::Nack(nack) => {
-                self.handle_nack(nack, packet.routing_header, packet.session_id);
-            },
-            PacketType::FloodRequest(flood_request) => {
-                self.handle_flood_request(flood_request, packet.routing_header, packet.session_id);
-            },
-            PacketType::FloodResponse(flood_response) => {
-                self.handle_flood_response(flood_response, packet.routing_header, packet.session_id);
-            },
-            PacketType::MsgFragment(fragment) => {
-                self.handle_fragment(packet.routing_header, fragment, packet.session_id);
-            },
+            PacketType::Ack(ack) => self.handle_ack(
+                ack.fragment_index,
+                packet.routing_header,
+                packet.session_id
+            )
+            ,
+            PacketType::Nack(nack) => self.handle_nack(
+                nack,
+                packet.routing_header,
+                packet.session_id
+            ),
+            PacketType::FloodRequest(flood_request) => self.handle_flood_request(
+                flood_request,
+                packet.routing_header,
+                packet.session_id
+            ),
+            PacketType::FloodResponse(flood_response) => self.handle_flood_response(
+                flood_response,
+                packet.routing_header,
+                packet.session_id
+            ),
+            PacketType::MsgFragment(fragment) => self.handle_fragment(
+                packet.routing_header,
+                fragment, packet.session_id
+            ),
         }
     }
 
@@ -169,28 +168,37 @@ impl RustDoIt {
     }
 
     fn handle_nack(&mut self, nack: Nack, mut srh: SourceRoutingHeader, session_id: u64) {
+        let current_hop = srh.current_hop().unwrap();
+        if current_hop != self.id {
+            self.generate_nack(
+                NackType::UnexpectedRecipient(current_hop),
+                srh,
+                session_id
+            );
+            return;
+        }
+
         let next_hop = &srh.next_hop().unwrap();
         srh.increase_hop_index();
         let new_nack = Packet::new_nack(
-            srh.clone(),
+            srh,
             session_id,
             nack,
         );
 
-
-
         match self.packet_send.get(next_hop) {
             Some(sender) => {
-                match sender.send(new_nack.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_nack)).unwrap(),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)).unwrap(),
-                }
+                let _ = match sender.send(new_nack.clone()) {
+                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_nack)),
+                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)),
+                };
             },
             None => { let _ = self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)); },
         }
     }
 
     fn handle_ack(&mut self, fragment_index: u64, mut srh: SourceRoutingHeader, session_id: u64) {
+
         let next_hop = &srh.next_hop().unwrap();
         srh.increase_hop_index();
 
@@ -207,10 +215,10 @@ impl RustDoIt {
 
         match self.packet_send.get(next_hop) {
             Some(sender) => {
-                match sender.send(new_ack.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_ack)).unwrap(),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_ack)).unwrap(),
-                }
+                let _ = match sender.send(new_ack.clone()) {
+                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_ack)),
+                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_ack)),
+                };
             },
             None => {
                 self.generate_nack(NackType::ErrorInRouting(*next_hop), new_ack.routing_header, session_id);
@@ -250,6 +258,15 @@ impl RustDoIt {
     }
 
     fn handle_fragment(&mut self, mut srh: SourceRoutingHeader, fragment: Fragment, session_id: u64) {
+        let current_hop = srh.current_hop().unwrap();
+        if current_hop != self.id {
+            self.generate_nack(
+                NackType::UnexpectedRecipient(current_hop),
+                srh,
+                session_id
+            );
+            return;
+        }
 
         let drop = rand::thread_rng().gen_range(0.0..1.0);
         if drop <= self.pdr {
@@ -367,6 +384,17 @@ impl RustDoIt {
         mut srh: SourceRoutingHeader,
         session_id: u64,
     ){
+
+        let current_hop = srh.current_hop().unwrap();
+        if current_hop != self.id {
+            self.generate_nack(
+                NackType::UnexpectedRecipient(current_hop),
+                srh,
+                session_id
+            );
+            return;
+        }
+
         let next_hop = &srh.next_hop().unwrap();
         srh.increase_hop_index();
         let flood_response_packet = Packet::new_flood_response(

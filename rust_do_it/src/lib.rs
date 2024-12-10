@@ -12,11 +12,11 @@ mod tests {
     use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType, NodeType};
     use wg_2024::config::{Config};
     use wg_2024::network::{SourceRoutingHeader};
-    use crossbeam_channel::{select_biased, unbounded};
-    use crossbeam_channel::{Receiver, Sender};
+    use crossbeam_channel::unbounded;
+
     use wg_2024::packet::Fragment;
-    use std::collections::{HashMap, HashSet};
-    use std::{fs, thread};
+    use std::collections::HashMap;
+    use std::thread;
     use wg_2024::packet::PacketType::{FloodRequest, FloodResponse};
     use super::*;
 
@@ -528,6 +528,7 @@ mod tests {
     #[test]
     /// Test the generation of a flood response due to an isolated drone (only neighbour the one who sent the flood request)
     pub fn flood_response_isolation() {
+
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Drone 11
