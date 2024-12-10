@@ -60,7 +60,7 @@ impl Drone for RustDoIt {
                         if self.handle_command(command) {
                             // Crashing routine
                             while let Ok(packet) = self.packet_recv.try_recv() {
-                                //self.handle_packet_crash(packet);
+                                self.handle_packet_crash(packet);
                             }
                             return;
                         }
@@ -106,7 +106,6 @@ impl RustDoIt {
 
     fn handle_packet(&mut self, packet: Packet) {
 
-
         match packet.pack_type {
             PacketType::Ack(ack) => self.handle_ack(
                 ack.fragment_index,
@@ -138,9 +137,9 @@ impl RustDoIt {
 
     fn handle_packet_crash(&mut self, packet: Packet) {
         match packet.pack_type {
-            PacketType::MsgFragment(_) => self.controller_send
-                .send(DroneEvent::PacketDropped(packet))
-                .unwrap(),
+            PacketType::MsgFragment(_) => {
+                let _ = self.controller_send.send(DroneEvent::PacketDropped(packet));
+            },
 
             PacketType::Ack(ack) => {
                 self.handle_ack(
@@ -155,9 +154,9 @@ impl RustDoIt {
                 packet.session_id
             ),
 
-            PacketType::FloodRequest(_) => self.controller_send.
-                send(DroneEvent::PacketDropped(packet))
-                .unwrap(),
+            PacketType::FloodRequest(_) => {
+                let _ = self.controller_send.send(DroneEvent::PacketDropped(packet));
+            },
 
             PacketType::FloodResponse(flood_response) => self.handle_flood_response(
                 flood_response,
@@ -178,52 +177,67 @@ impl RustDoIt {
             return;
         }
 
-        let next_hop = &srh.next_hop().unwrap();
-        srh.increase_hop_index();
-        let new_nack = Packet::new_nack(
-            srh,
-            session_id,
-            nack,
-        );
-
-        match self.packet_send.get(next_hop) {
-            Some(sender) => {
-                let _ = match sender.send(new_nack.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_nack)),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)),
-                };
+        match &srh.next_hop() {
+            None => {
+                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                return;
             },
-            None => { let _ = self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)); },
+            Some(next_hop) => {
+                srh.increase_hop_index();
+                let new_nack = Packet::new_nack(
+                    srh,
+                    session_id,
+                    nack,
+                );
+
+                match self.packet_send.get(next_hop) {
+                    Some(sender) => {
+                        let _ = match sender.send(new_nack.clone()) {
+                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_nack)),
+                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)),
+                        };
+                    },
+                    None => { let _ = self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)); },
+                }
+            }
         }
     }
 
     fn handle_ack(&mut self, fragment_index: u64, mut srh: SourceRoutingHeader, session_id: u64) {
 
-        let next_hop = &srh.next_hop().unwrap();
-        srh.increase_hop_index();
-
-        if !srh.valid_hop_index() {
-            self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
-            return;
-        }
-
-        let new_ack = Packet::new_ack(
-            srh,
-            session_id,
-            fragment_index,
-        );
-
-        match self.packet_send.get(next_hop) {
-            Some(sender) => {
-                let _ = match sender.send(new_ack.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_ack)),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_ack)),
-                };
-            },
+        match &srh.next_hop() {
             None => {
-                self.generate_nack(NackType::ErrorInRouting(*next_hop), new_ack.routing_header, session_id);
+                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                return;
+            },
+            Some(next_hop) => {
+                srh.increase_hop_index();
+
+                if !srh.valid_hop_index() {
+                    self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                    return;
+                }
+
+                let new_ack = Packet::new_ack(
+                    srh,
+                    session_id,
+                    fragment_index,
+                );
+
+                match self.packet_send.get(next_hop) {
+                    Some(sender) => {
+                        let _ = match sender.send(new_ack.clone()) {
+                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_ack)),
+                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_ack)),
+                        };
+                    },
+                    None => {
+                        self.generate_nack(NackType::ErrorInRouting(*next_hop), new_ack.routing_header, session_id);
+                    }
+                }
             }
         }
+
 
     }
 
@@ -272,40 +286,48 @@ impl RustDoIt {
         if drop <= self.pdr {
 
             let dropped_fragment = Packet::new_fragment(
-                srh.clone(),
+                srh,
                 session_id,
-                fragment.clone(),
+                fragment,
             );
             let _ = self.controller_send.send(DroneEvent::PacketDropped(dropped_fragment.clone()));
             self.generate_nack(NackType::Dropped, dropped_fragment.routing_header, session_id);
             return;
         }
 
-        let next_hop = &srh.next_hop().unwrap();
-        srh.increase_hop_index();
-
-        if !srh.valid_hop_index() {
-            self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
-            return;
-        }
-
-        let new_fragment = Packet::new_fragment(
-            srh,
-            session_id,
-            fragment,
-        );
-
-        match self.packet_send.get(next_hop) {
-            Some(sender) => {
-                let _ = match sender.send(new_fragment.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_fragment)),
-                    Err(_) => self.controller_send.send(DroneEvent::PacketDropped(new_fragment)),
-                };
-            },
+        match &srh.next_hop() {
             None => {
-                self.generate_nack(NackType::ErrorInRouting(*next_hop), new_fragment.routing_header, session_id);
+                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                return;
+            },
+            Some(next_hop) => {
+                srh.increase_hop_index();
+
+                if !srh.valid_hop_index() {
+                    self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                    return;
+                }
+
+                let new_fragment = Packet::new_fragment(
+                    srh,
+                    session_id,
+                    fragment,
+                );
+
+                match self.packet_send.get(next_hop) {
+                    Some(sender) => {
+                        let _ = match sender.send(new_fragment.clone()) {
+                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_fragment)),
+                            Err(_) => self.controller_send.send(DroneEvent::PacketDropped(new_fragment)),
+                        };
+                    },
+                    None => {
+                        self.generate_nack(NackType::ErrorInRouting(*next_hop), new_fragment.routing_header, session_id);
+                    }
+                }
             }
         }
+
     }
 
     fn handle_flood_request(
@@ -395,23 +417,30 @@ impl RustDoIt {
             return;
         }
 
-        let next_hop = &srh.next_hop().unwrap();
-        srh.increase_hop_index();
-        let flood_response_packet = Packet::new_flood_response(
-            srh,
-            session_id,
-            flood_response
-        );
-
-        match self.packet_send.get(next_hop) {
-            Some(sender) => {
-                let _ = match sender.send(flood_response_packet.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(flood_response_packet)),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(flood_response_packet)),
-                };
-            },
+        match &srh.next_hop(){
             None => {
-                self.generate_nack(NackType::ErrorInRouting(*next_hop), flood_response_packet.routing_header, session_id);
+                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                return;
+            }
+            Some(next_hop) => {
+                srh.increase_hop_index();
+                let flood_response_packet = Packet::new_flood_response(
+                    srh,
+                    session_id,
+                    flood_response
+                );
+
+                match self.packet_send.get(next_hop) {
+                    Some(sender) => {
+                        let _ = match sender.send(flood_response_packet.clone()) {
+                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(flood_response_packet)),
+                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(flood_response_packet)),
+                        };
+                    },
+                    None => {
+                        self.generate_nack(NackType::ErrorInRouting(*next_hop), flood_response_packet.routing_header, session_id);
+                    }
+                }
             }
         }
     }
