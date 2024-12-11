@@ -709,4 +709,208 @@ mod tests {
             println!("{:?}", event);
         }
     }
+
+    #[test]
+    fn destination_is_drone(){
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d11_send, d11_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        let (d_event_send, d_event_recv) = unbounded();
+
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d11_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+
+        let neighbours12 = HashMap::from([(11, d11_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        let srh = SourceRoutingHeader::new(vec![1, 11, 12], 1);
+        let packet = Packet {
+            pack_type: PacketType::MsgFragment(Fragment {
+                fragment_index: 1,
+                total_n_fragments: 1,
+                length: 128,
+                data: [1; 128],
+            }),
+            routing_header: srh,
+            session_id: 1,
+        };
+
+        d11_send.send(packet.clone()).unwrap();
+
+        let expected = Packet{
+            pack_type: PacketType::Nack(Nack{
+                fragment_index: 0,
+                nack_type: NackType::DestinationIsDrone,
+            }),
+            routing_header: SourceRoutingHeader::new(vec![12, 11, 1], 2),
+            session_id: 1,
+        };
+
+        let got = c_recv.recv().unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn error_in_routing(){
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d11_send, d11_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        let (d_event_send, d_event_recv) = unbounded();
+
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d11_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+
+        let neighbours12 = HashMap::from([(11, d11_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        let srh = SourceRoutingHeader::new(vec![1, 11, 13], 1);
+        let packet = Packet {
+            pack_type: PacketType::MsgFragment(Fragment {
+                fragment_index: 1,
+                total_n_fragments: 1,
+                length: 128,
+                data: [1; 128],
+            }),
+            routing_header: srh,
+            session_id: 1,
+        };
+
+        d11_send.send(packet.clone()).unwrap();
+
+        let expected = Packet{
+            pack_type: PacketType::Nack(Nack{
+                fragment_index: 0,
+                nack_type: NackType::ErrorInRouting(13),
+            }),
+            routing_header: SourceRoutingHeader::new(vec![11, 1], 1),
+            session_id: 1,
+        };
+
+        let got = c_recv.recv().unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn unexpected_recipient(){
+        let (c_send, c_recv) = unbounded();
+        // Server 21 channels
+        let (s_send, s_recv) = unbounded();
+        // Drone 11
+        let (d11_send, d11_recv) = unbounded();
+        // Drone 12
+        let (d12_send, d12_recv) = unbounded();
+        // SC - needed to not make the drone crash
+        let (_d_command_send, d_command_recv) = unbounded();
+
+        let (d_event_send, d_event_recv) = unbounded();
+
+        let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
+        let mut drone1 = RustDoIt::new(
+            11,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d11_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+
+        let neighbours12 = HashMap::from([(11, d11_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d12_recv.clone(),
+            neighbours12,
+            0.0,
+        );
+
+        thread::spawn(move || {
+            drone1.run();
+        });
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        let srh = SourceRoutingHeader::new(vec![1, 12, 11], 1);
+        let packet = Packet {
+            pack_type: PacketType::MsgFragment(Fragment {
+                fragment_index: 1,
+                total_n_fragments: 1,
+                length: 128,
+                data: [1; 128],
+            }),
+            routing_header: srh,
+            session_id: 1,
+        };
+
+        d11_send.send(packet.clone()).unwrap();
+
+        let expected = Packet{
+            pack_type: PacketType::Nack(Nack{
+                fragment_index: 0,
+                nack_type: NackType::UnexpectedRecipient(12),
+            }),
+            routing_header: SourceRoutingHeader::new(vec![11, 1], 1),
+            session_id: 1,
+        };
+
+        let got = c_recv.recv().unwrap();
+        assert_eq!(got, expected);
+    }
 }

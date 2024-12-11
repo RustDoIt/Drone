@@ -247,10 +247,28 @@ impl RustDoIt {
             nack_type,
         };
 
-        srh.hops.reverse();                                                       // reverse the trace
-        srh.hop_index = srh.hops.len() - srh.hop_index - 1; // starting node
-        srh.hops = srh.hops.split_off(srh.hop_index);       // truncate and keep only useful path
-        srh.hop_index = 1;
+        match nack_type {
+            NackType::ErrorInRouting(_) => {
+                // reverse the trace
+                srh = srh.sub_route(0..srh.hop_index).unwrap();
+                srh.hops.reverse();
+                srh.hop_index = 1;
+            },
+            NackType::UnexpectedRecipient(id) => {
+                // reverse the trace
+                srh = srh.sub_route(0..=srh.hop_index).unwrap();
+                srh.hops.pop();
+                srh.hops.push(self.id);
+                srh.hops.reverse();
+                srh.hop_index = 1;
+            },
+            _ => {
+                // reverse the trace
+                srh = srh.sub_route(0..=srh.hop_index).unwrap();
+                srh.hops.reverse();
+                srh.hop_index = 1;
+            }
+        }
 
         let mut new_nack = Packet::new_nack(
             srh,
