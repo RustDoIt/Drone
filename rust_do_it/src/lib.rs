@@ -1,5 +1,4 @@
 mod rust_do_it;
-use rust_do_it::RustDoIt;
 
 
 #[cfg(test)]
@@ -17,7 +16,7 @@ mod tests {
     use std::collections::HashMap;
     use std::thread;
     use wg_2024::packet::PacketType::{FloodRequest, FloodResponse};
-    use super::*;
+    use crate::rust_do_it::RustDoIt;
 
     fn create_sample_packet() -> Packet {
         Packet {

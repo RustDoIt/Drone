@@ -57,6 +57,10 @@ impl Drone for RustDoIt {
             select_biased! {
                 recv(self.controller_recv) -> command => {
                     if let Ok(command) = command {
+                        if let DroneCommand::Crash = command {
+                            self.handle_command(command);
+                            return;
+                        }
                         self.handle_command(command);
                     }
                 },
@@ -67,6 +71,7 @@ impl Drone for RustDoIt {
                 }
             }
         }
+
     }
 }
 
@@ -91,7 +96,7 @@ impl RustDoIt {
                 while let Ok(packet) = self.packet_recv.try_recv() {
                     self.handle_packet_crash(packet);
                 };
-                process::exit(0);
+                return;
             },
 
             DroneCommand::RemoveSender(node_id) => {
