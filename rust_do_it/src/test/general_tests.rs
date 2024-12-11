@@ -489,9 +489,6 @@ mod test {
         assert!(packet_event == DroneEvent::PacketSent(packet_true_2.clone()) || packet_event == DroneEvent::PacketSent(packet_true_3.clone()));
         let packet_event = d_event_recv.recv().unwrap();
         assert!(packet_event == DroneEvent::PacketSent(packet_true_2.clone()) || packet_event == DroneEvent::PacketSent(packet_true_3.clone()));
-        d_command_send.send(DroneCommand::Crash).unwrap();
-        d_command_send.send(DroneCommand::Crash).unwrap();
-        d_command_send.send(DroneCommand::Crash).unwrap();
     }
 
     #[test]
