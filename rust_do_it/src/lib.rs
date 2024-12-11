@@ -4,13 +4,12 @@ use rust_do_it::RustDoIt;
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
     use wg_2024::drone::{Drone};
     use wg_2024::controller::{DroneCommand, DroneEvent};
-    use wg_2024::controller;
+    //use wg_2024::controller;
     use wg_2024::network::NodeId;
     use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType, NodeType};
-    use wg_2024::config::{Config};
+    //use wg_2024::config::{Config};
     use wg_2024::network::{SourceRoutingHeader};
     use crossbeam_channel::unbounded;
 
@@ -33,20 +32,6 @@ mod tests {
                 hops: vec![1, 11, 12, 21],
             },
             session_id: 1,
-        }
-    }
-
-    fn create_custom_fragment(
-        fragment_index: u64,
-        total_n_fragments: u64,
-        length: u8,
-        data: [u8; 128]
-    ) -> Fragment {
-        Fragment {
-            fragment_index,
-            total_n_fragments,
-            length,
-            data
         }
     }
 
@@ -78,7 +63,7 @@ mod tests {
     pub fn generic_packet_forward() {
         let (d_send, d_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
         let (d_event_send, d_event_recv) = unbounded();
         let neighbours = HashMap::from([(12, d2_send.clone())]);
         let mut drone11 = RustDoIt::new(
@@ -106,6 +91,8 @@ mod tests {
 
         assert_eq!(packet_received, msg);
         assert_eq!(event_log, packet_sent_event);
+
+        d_command_send.send(DroneCommand::Crash).unwrap()
     }
 
 
@@ -115,7 +102,7 @@ mod tests {
     pub fn generic_nack_forward() {
         let (d1_send, d1_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
         let (d_event_send, d_event_recv) = unbounded();
         let neighbours = HashMap::from([(1, d2_send.clone())]);
 
@@ -153,6 +140,8 @@ mod tests {
 
         assert_eq!(packet_received, nack);
         assert_eq!(event, packet_sent_event);
+        d_command_send.send(DroneCommand::Crash).unwrap()
+
     }
 
     #[test]
@@ -164,7 +153,7 @@ mod tests {
         // Drone 11
         let (d_send, d_recv) = unbounded();
         // SC commands
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
         let (d_event_send, d_event_recv) = unbounded();
 
 
@@ -210,6 +199,54 @@ mod tests {
         assert_eq!(packet_sent_event, nack_sent);
         assert_eq!(packet_drop_event, packet_dropped);
         assert_eq!(c_recv.recv().unwrap(), nack_packet);
+        d_command_send.send(DroneCommand::Crash).unwrap()
+
+    }
+
+    #[test]
+    fn ack_forward() {
+        let (d1_send, d1_recv) = unbounded();
+        let (d2_send, d2_recv) = unbounded::<Packet>();
+        let (c_send, _c_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
+        let (d_event_send, _d_event_recv) = unbounded();
+
+        let neighbours11 = HashMap::from([(1, c_send.clone()),(12, d2_send.clone())]);
+        let mut drone = RustDoIt::new(
+            11,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d1_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+
+
+
+        thread::spawn(move || {
+            drone.run();
+        });
+
+
+        let mut ack = Packet {
+            pack_type: PacketType::Ack(Ack {
+                fragment_index: 1,
+            }),
+            routing_header: SourceRoutingHeader {
+                hop_index: 1,
+                hops: vec![1, 11, 12],
+            },
+            session_id: 1,
+        };
+
+        d1_send.send(ack.clone()).unwrap();
+
+        let got = d2_recv.recv().unwrap();
+        ack.routing_header.hop_index += 1;
+
+        assert_eq!(ack, got);
+        d_command_send.send(DroneCommand::Crash).unwrap()
+
     }
 
     #[test]
@@ -218,13 +255,13 @@ mod tests {
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
-        let (s_send, s_recv) = unbounded();
+        let (s_send, _s_recv) = unbounded();
         // Drone 11
         let (d_send, d_recv) = unbounded();
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
@@ -275,6 +312,9 @@ mod tests {
 
         let packet_got = c_recv.recv().unwrap();
         assert_eq!(packet_true, packet_got);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
+
 
     }
 
@@ -282,7 +322,7 @@ mod tests {
     /// Test forward functionality of a generic packet for a chain of drones
     pub fn generic_chain_fragment_forward() {
         // Client 1 channels
-        let (c_send, c_recv) = unbounded();
+        let (c_send, _c_recv) = unbounded();
         // Server 21 channels
         let (s_send, s_recv) = unbounded();
         // Drone 11
@@ -290,7 +330,7 @@ mod tests {
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
@@ -332,6 +372,10 @@ mod tests {
 
         let packet_got = s_recv.recv().unwrap();
         assert_eq!(packet_true, packet_got);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap()
+
+
     }
 
 
@@ -340,7 +384,7 @@ mod tests {
     /// Test the forward of a flood request coming from drone1, forwarded to drone2 and drone3
     pub fn flood_request_forward() {
         // Client 1 channels
-        let (c_send, c_recv) = unbounded();
+        let (c_send, _c_recv) = unbounded();
         // Server 21 channels
         let (s_send, s_recv) = unbounded();
         // Drone 11
@@ -350,7 +394,7 @@ mod tests {
         // Drone 13
         let (d13_send, d13_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
         let (d_event_send, d_event_recv) = unbounded();
 
@@ -452,6 +496,10 @@ mod tests {
         assert!(packet_event == DroneEvent::PacketSent(packet_true_2.clone()) || packet_event == DroneEvent::PacketSent(packet_true_3.clone()));
         let packet_event = d_event_recv.recv().unwrap();
         assert!(packet_event == DroneEvent::PacketSent(packet_true_2.clone()) || packet_event == DroneEvent::PacketSent(packet_true_3.clone()));
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
+
     }
 
     #[test]
@@ -460,13 +508,13 @@ mod tests {
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
-        let (s_send, s_recv) = unbounded();
+        let (s_send, _s_recv) = unbounded();
         // Drone 11
         let (d_send, d_recv) = unbounded();
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
@@ -523,6 +571,9 @@ mod tests {
         let packet_got = c_recv.recv().unwrap();
 
         assert_eq!(packet_got, packet_true);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
+
     }
 
     #[test]
@@ -536,7 +587,7 @@ mod tests {
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
@@ -604,12 +655,14 @@ mod tests {
 
         let packet_got = c_recv.recv().unwrap();
         assert_eq!(packet_got, packet_true);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
     }
 
     #[test]
     /// Test the generation of a flood response due to an already visited hop
     pub fn flood_response_visited() {
-        let (c_send, c_recv) = unbounded();
+        let (c_send, _c_recv) = unbounded();
         // Server 21 channels
         let (s_send, s_recv) = unbounded();
         // Drone 11
@@ -619,7 +672,7 @@ mod tests {
         // Drone 13
         let (d13_send, d13_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
         let (d_event_send, d_event_recv) = unbounded();
 
@@ -708,21 +761,25 @@ mod tests {
         while let Ok(event) = d_event_recv.try_recv() {
             println!("{:?}", event);
         }
+
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
     }
 
     #[test]
     fn destination_is_drone(){
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
-        let (s_send, s_recv) = unbounded();
+        let (s_send, _s_recv) = unbounded();
         // Drone 11
         let (d11_send, d11_recv) = unbounded();
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
-        let (d_event_send, d_event_recv) = unbounded();
+        let (d_event_send, _d_event_recv) = unbounded();
 
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
         let mut drone1 = RustDoIt::new(
@@ -776,21 +833,23 @@ mod tests {
 
         let got = c_recv.recv().unwrap();
         assert_eq!(got, expected);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
     }
 
     #[test]
     fn error_in_routing(){
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
-        let (s_send, s_recv) = unbounded();
+        let (s_send, _s_recv) = unbounded();
         // Drone 11
         let (d11_send, d11_recv) = unbounded();
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
-        let (d_event_send, d_event_recv) = unbounded();
+        let (d_event_send, _d_event_recv) = unbounded();
 
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
         let mut drone1 = RustDoIt::new(
@@ -844,21 +903,23 @@ mod tests {
 
         let got = c_recv.recv().unwrap();
         assert_eq!(got, expected);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
     }
 
     #[test]
     fn unexpected_recipient(){
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
-        let (s_send, s_recv) = unbounded();
+        let (s_send, _s_recv) = unbounded();
         // Drone 11
         let (d11_send, d11_recv) = unbounded();
         // Drone 12
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (_d_command_send, d_command_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
 
-        let (d_event_send, d_event_recv) = unbounded();
+        let (d_event_send, _d_event_recv) = unbounded();
 
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
         let mut drone1 = RustDoIt::new(
@@ -912,5 +973,70 @@ mod tests {
 
         let got = c_recv.recv().unwrap();
         assert_eq!(got, expected);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap();
+    }
+
+    #[test]
+    fn add_sender(){
+        let (s_send, s_recv) = unbounded();
+
+        let (d_send, d_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
+        let (d_event_send, _d_event_recv) = unbounded();
+        let neighbours = HashMap::new();
+
+        let mut drone = RustDoIt::new(
+            11,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d_recv,
+            neighbours,
+            0.0,
+        );
+
+        thread::spawn(move || {
+            drone.run();
+        });
+
+        let (d2_send, d2_recv) = unbounded();
+        let (_d2_command_send, d2_command_recv) = unbounded();
+        let neighbours = HashMap::from([(11, d_send.clone()), (21, s_send.clone())]);
+        let mut drone2 = RustDoIt::new(
+            12,
+            d_event_send.clone(),
+            d2_command_recv.clone(),
+            d2_recv,
+            neighbours,
+            0.0,
+        );
+
+        thread::spawn(move || {
+            drone2.run();
+        });
+
+        d_command_send.send(DroneCommand::AddSender(12, d2_send)).unwrap();
+        let msg = Packet{
+            pack_type: PacketType::MsgFragment(Fragment{
+                fragment_index: 1,
+                total_n_fragments: 1,
+                length: 128,
+                data: [1; 128],
+            }),
+            routing_header: SourceRoutingHeader::new(vec![1, 11, 12, 21], 1),
+            session_id: 1,
+        };
+
+        // Client sends packet to the drone
+        d_send.send(msg.clone()).unwrap();
+
+        // Server receives a packet with the same content of msg but with hop_index+2
+        let mut packet_true = msg.clone();
+        packet_true.routing_header.hop_index += 2;
+
+        let packet_got = s_recv.recv().unwrap();
+        assert_eq!(packet_true, packet_got);
+        d_command_send.send(DroneCommand::Crash).unwrap();
+        d_command_send.send(DroneCommand::Crash).unwrap()
     }
 }

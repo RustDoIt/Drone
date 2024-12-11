@@ -4,19 +4,19 @@ extern crate wg_2024;
 use rand::Rng;
 use wg_2024::drone::{Drone};
 use wg_2024::controller::{DroneCommand, DroneEvent};
-use wg_2024::controller;
+//use wg_2024::controller;
 use wg_2024::network::NodeId;
-use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType, NodeType, FloodRequest, FloodResponse};
-use wg_2024::config::{Config};
-use wg_2024::network::{SourceRoutingHeader};
-use crossbeam_channel::{select_biased, unbounded};
+use wg_2024::packet::{Nack, NackType, Packet, PacketType, NodeType, FloodRequest, FloodResponse};
+use wg_2024::network::SourceRoutingHeader;
+use crossbeam_channel::select_biased;
 use crossbeam_channel::{Receiver, Sender};
 use wg_2024::packet::Fragment;
+use std::process;
 
 use std::collections::{HashMap, HashSet};
-use std::{fs, thread};
-use std::ops::{Bound, Index};
-use std::process::Command;
+
+//use std::ops::Index;
+
 
 #[derive(Debug)]
 pub struct RustDoIt {
@@ -57,13 +57,7 @@ impl Drone for RustDoIt {
             select_biased! {
                 recv(self.controller_recv) -> command => {
                     if let Ok(command) = command {
-                        if self.handle_command(command) {
-                            // Crashing routine
-                            while let Ok(packet) = self.packet_recv.try_recv() {
-                                self.handle_packet_crash(packet);
-                            }
-                            return;
-                        }
+                        self.handle_command(command);
                     }
                 },
                 recv(self.packet_recv) -> packet => {
@@ -77,33 +71,38 @@ impl Drone for RustDoIt {
 }
 
 impl RustDoIt {
-    fn handle_command(&mut self, command: DroneCommand) -> bool {
+
+    /// This function handles the commands sent by the controller
+    fn handle_command(&mut self, command: DroneCommand) {
         match command {
             DroneCommand::AddSender(node_id, sender) => {
                 if !self.packet_send.contains_key(&node_id) {
                     self.packet_send.insert(node_id, sender);
                 }
-                false
             },
 
             DroneCommand::SetPacketDropRate(pdr) => {
                 if pdr >= 0.0 && pdr <= 1.0 {
                     self.pdr = pdr;
                 }
-                false
             },
 
-            DroneCommand::Crash => true,
+            DroneCommand::Crash => {
+                while let Ok(packet) = self.packet_recv.try_recv() {
+                    self.handle_packet_crash(packet);
+                };
+                process::exit(0);
+            },
 
             DroneCommand::RemoveSender(node_id) => {
                 if let Some(_removed_sender) = self.packet_send.remove(&node_id) {
                     println!("Removed {} from drone {}", node_id, self.id);
                 }
-                false
             },
         }
     }
 
+    /// This function handles the packet
     fn handle_packet(&mut self, packet: Packet) {
 
         match packet.pack_type {
@@ -135,6 +134,7 @@ impl RustDoIt {
         }
     }
 
+    /// This function handles the packet in case of a crash
     fn handle_packet_crash(&mut self, packet: Packet) {
         match packet.pack_type {
             PacketType::MsgFragment(_) => {
@@ -166,14 +166,9 @@ impl RustDoIt {
         }
     }
 
+    /// This function forward the nack to the next hop
     fn handle_nack(&self, nack: Nack, mut srh: SourceRoutingHeader, session_id: u64) {
-        let current_hop = srh.current_hop().unwrap();
-        if current_hop != self.id {
-            self.generate_nack(
-                NackType::UnexpectedRecipient(current_hop),
-                srh,
-                session_id
-            );
+        if !self.is_correct_recipient(&srh, session_id) {
             return;
         }
 
@@ -203,7 +198,11 @@ impl RustDoIt {
         }
     }
 
+    /// This function forward the ack to the next hop
     fn handle_ack(&self, fragment_index: u64, mut srh: SourceRoutingHeader, session_id: u64) {
+        if !self.is_correct_recipient(&srh, session_id) {
+            return;
+        }
 
         match &srh.next_hop() {
             None => {
@@ -241,6 +240,7 @@ impl RustDoIt {
 
     }
 
+    /// This function generates a nack and sends it to the next hop
     fn generate_nack(&self, nack_type: NackType, mut srh: SourceRoutingHeader, session_id: u64) {
         let nack = Nack {
             fragment_index: 0,
@@ -254,7 +254,7 @@ impl RustDoIt {
                 srh.hops.reverse();
                 srh.hop_index = 1;
             },
-            NackType::UnexpectedRecipient(id) => {
+            NackType::UnexpectedRecipient(_) => {
                 // reverse the trace
                 srh = srh.sub_route(0..=srh.hop_index).unwrap();
                 srh.hops.pop();
@@ -270,7 +270,7 @@ impl RustDoIt {
             }
         }
 
-        let mut new_nack = Packet::new_nack(
+        let new_nack = Packet::new_nack(
             srh,
             session_id,
             nack,
@@ -289,14 +289,9 @@ impl RustDoIt {
         }
     }
 
+    /// This function handles the fragment and forwards it to the next hop
     fn handle_fragment(&self, mut srh: SourceRoutingHeader, fragment: Fragment, session_id: u64) {
-        let current_hop = srh.current_hop().unwrap();
-        if current_hop != self.id {
-            self.generate_nack(
-                NackType::UnexpectedRecipient(current_hop),
-                srh,
-                session_id
-            );
+        if !self.is_correct_recipient(&srh, session_id) {
             return;
         }
 
@@ -348,6 +343,7 @@ impl RustDoIt {
 
     }
 
+    /// This function handles the flood request and forwards it to the next hop
     fn handle_flood_request(
         &mut self,
         mut flood_request: FloodRequest,
@@ -390,6 +386,7 @@ impl RustDoIt {
         }
     }
 
+    /// This function generates a flood response and sends it to the next hop
     fn generate_flood_response(&self, flood_request: FloodRequest, session_id: u64) {
         let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
         route.reverse();
@@ -428,19 +425,15 @@ impl RustDoIt {
         }
     }
 
+    /// This function handles the flood response and forwards it to the next hop
     fn handle_flood_response(
             &self,
             flood_response: FloodResponse,
             mut srh: SourceRoutingHeader,
             session_id: u64,
         ) {
-        let current_hop = srh.current_hop().unwrap();
-        if current_hop != self.id {
-            self.generate_nack(
-                NackType::UnexpectedRecipient(current_hop),
-                srh,
-                session_id
-            );
+
+        if !self.is_correct_recipient(&srh, session_id) {
             return;
         }
 
@@ -469,6 +462,20 @@ impl RustDoIt {
                     }
                 }
             }
+        }
+    }
+
+    fn is_correct_recipient(&self, srh: &SourceRoutingHeader, session_id: u64) -> bool {
+        let current_hop = srh.current_hop().unwrap();
+        if current_hop != self.id {
+            self.generate_nack(
+                NackType::UnexpectedRecipient(current_hop),
+                srh.clone(),
+                session_id
+            );
+            false
+        } else {
+            true
         }
     }
 }
