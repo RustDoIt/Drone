@@ -238,7 +238,13 @@ mod test {
         ack.routing_header.hop_index += 1;
 
         assert_eq!(ack, got);
-        d_command_send.send(DroneCommand::Crash).unwrap()
+        d_command_send.send(DroneCommand::Crash).unwrap();
+
+        ack.routing_header.hop_index -= 1;
+        d1_send.send(ack.clone()).unwrap();
+        let got = d2_recv.recv().unwrap();
+        ack.routing_header.hop_index += 1;
+        assert_eq!(ack, got);
     }
 
     #[test]

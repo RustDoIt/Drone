@@ -1,6 +1,6 @@
 extern crate wg_2024;
 
-
+use log::{info, warn, error, debug};
 use rand::Rng;
 use wg_2024::drone::{Drone};
 use wg_2024::controller::{DroneCommand, DroneEvent};
@@ -55,6 +55,7 @@ impl Drone for RustDoIt {
             select_biased! {
                 recv(self.controller_recv) -> command => {
                     if let Ok(command) = command {
+                        debug!("Drone {} received command {:?}", self.id, command);
                         if let DroneCommand::Crash = command {
                             self.handle_command(command);
                             return;
@@ -64,6 +65,7 @@ impl Drone for RustDoIt {
                 },
                 recv(self.packet_recv) -> packet => {
                     if let Ok(packet) = packet {
+                        debug!("Drone {} received packet {:?}", self.id, packet);
                         self.handle_packet(packet);
                     }
                 }
@@ -81,25 +83,28 @@ impl RustDoIt {
             DroneCommand::AddSender(node_id, sender) => {
                 if !self.packet_send.contains_key(&node_id) {
                     self.packet_send.insert(node_id, sender);
+                    debug!("Drone {} added sender {}", self.id, node_id);
                 }
             },
 
             DroneCommand::SetPacketDropRate(pdr) => {
                 if pdr >= 0.0 && pdr <= 1.0 {
                     self.pdr = pdr;
+                    debug!("Drone {} set PDR to {}", self.id, self.pdr);
                 }
             },
 
             DroneCommand::Crash => {
                 while let Ok(packet) = self.packet_recv.try_recv() {
                     self.handle_packet_crash(packet);
+                    debug!("Drone {} crashed", self.id);
                 };
                 return;
             },
 
             DroneCommand::RemoveSender(node_id) => {
                 if let Some(_removed_sender) = self.packet_send.remove(&node_id) {
-                    println!("Removed {} from drone {}", node_id, self.id);
+                    debug!("Drone {} removed sender {}", self.id, node_id);
                 }
             },
         }
@@ -141,7 +146,14 @@ impl RustDoIt {
     fn handle_packet_crash(&mut self, packet: Packet) {
         match packet.pack_type {
             PacketType::MsgFragment(_) => {
-                let _ = self.controller_send.send(DroneEvent::PacketDropped(packet));
+                self.generate_nack(
+                    NackType::ErrorInRouting(self.id),
+                    packet.routing_header.clone(),
+                    packet.session_id
+                );
+                if self.controller_send.send(DroneEvent::PacketDropped(packet)).is_err() {
+                    error!("Drone {} could not send packet to controller", self.id);
+                }
             },
 
             PacketType::Ack(ack) => {
@@ -158,6 +170,11 @@ impl RustDoIt {
             ),
 
             PacketType::FloodRequest(_) => {
+                self.generate_nack(
+                    NackType::ErrorInRouting(self.id),
+                    packet.routing_header.clone(),
+                    packet.session_id
+                );
                 let _ = self.controller_send.send(DroneEvent::PacketDropped(packet));
             },
 
@@ -188,15 +205,7 @@ impl RustDoIt {
                     nack,
                 );
 
-                match self.packet_send.get(next_hop) {
-                    Some(sender) => {
-                        let _ = match sender.send(new_nack.clone()) {
-                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_nack)),
-                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)),
-                        };
-                    },
-                    None => { let _ = self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)); },
-                }
+                self.forward_packet(new_nack, next_hop);
             }
         }
     }
@@ -226,17 +235,7 @@ impl RustDoIt {
                     fragment_index,
                 );
 
-                match self.packet_send.get(next_hop) {
-                    Some(sender) => {
-                        let _ = match sender.send(new_ack.clone()) {
-                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_ack)),
-                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_ack)),
-                        };
-                    },
-                    None => {
-                        self.generate_nack(NackType::ErrorInRouting(*next_hop), new_ack.routing_header, session_id);
-                    }
-                }
+                self.forward_packet(new_ack, next_hop);
             }
         }
 
@@ -281,15 +280,8 @@ impl RustDoIt {
         let next_hop = &new_nack.routing_header.current_hop().unwrap();
 
         // send nack to next hop, if send fails, send to controller
-        match self.packet_send.get(next_hop) {
-            Some(sender) => {
-                let _ = match sender.send(new_nack.clone()) {
-                    Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_nack)),
-                    Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)),
-                };
-            },
-            None => { let _ = self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)); },
-        }
+        self.forward_packet(new_nack, next_hop);
+
     }
 
     /// This function handles the fragment and forwards it to the next hop
@@ -330,17 +322,7 @@ impl RustDoIt {
                     fragment,
                 );
 
-                match self.packet_send.get(next_hop) {
-                    Some(sender) => {
-                        let _ = match sender.send(new_fragment.clone()) {
-                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_fragment)),
-                            Err(_) => self.controller_send.send(DroneEvent::PacketDropped(new_fragment)),
-                        };
-                    },
-                    None => {
-                        self.generate_nack(NackType::ErrorInRouting(*next_hop), new_fragment.routing_header, session_id);
-                    }
-                }
+                self.forward_packet(new_fragment, next_hop);
             }
         }
 
@@ -381,10 +363,14 @@ impl RustDoIt {
 
         for neighbor in &self.packet_send {
             if *neighbor.0 != prev_hop {
-                let _ = match neighbor.1.send(new_flood_request.clone()) {
+                let result = match neighbor.1.send(new_flood_request.clone()) {
                     Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_flood_request.clone())),
                     Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(new_flood_request.clone())),
                 };
+
+                if result.is_err() {
+                    error!("Drone {} could not send packet to controller", self.id);
+                }
             }
         }
     }
@@ -407,23 +393,12 @@ impl RustDoIt {
             },
             Some(next_hop) => {
                 srh.increase_hop_index();
-                let flood_response_packet = Packet::new_flood_response(
+                let new_flood_response = Packet::new_flood_response(
                     srh,
                     session_id,
                     flood_response
                 );
-
-                match self.packet_send.get(next_hop) {
-                    Some(sender) => {
-                        let _ = match sender.send(flood_response_packet.clone()) {
-                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(flood_response_packet)),
-                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(flood_response_packet)),
-                        };
-                    },
-                    None => {
-                        self.generate_nack(NackType::ErrorInRouting(*next_hop), flood_response_packet.routing_header, session_id);
-                    }
-                }
+                self.forward_packet(new_flood_response, next_hop);
             }
         }
     }
@@ -452,25 +427,14 @@ impl RustDoIt {
                     session_id,
                     flood_response
                 );
-
-                match self.packet_send.get(next_hop) {
-                    Some(sender) => {
-                        let _ = match sender.send(flood_response_packet.clone()) {
-                            Ok(_) => self.controller_send.send(DroneEvent::PacketSent(flood_response_packet)),
-                            Err(_) => self.controller_send.send(DroneEvent::ControllerShortcut(flood_response_packet)),
-                        };
-                    },
-                    None => {
-                        self.generate_nack(NackType::ErrorInRouting(*next_hop), flood_response_packet.routing_header, session_id);
-                    }
-                }
+                self.forward_packet(flood_response_packet, next_hop);
             }
         }
     }
 
     fn is_correct_recipient(&self, srh: &SourceRoutingHeader, session_id: u64) -> bool {
         let current_hop = srh.current_hop().unwrap();
-        if current_hop != self.id || srh.hop_index >= srh.len() {
+        if current_hop != self.id {
             self.generate_nack(
                 NackType::UnexpectedRecipient(current_hop),
                 srh.clone(),
@@ -479,6 +443,52 @@ impl RustDoIt {
             false
         } else {
             true
+        }
+    }
+
+    fn forward_packet(
+        &self,
+        packet: Packet,
+        next_hop: &NodeId,
+    ) {
+        match self.packet_send.get(next_hop) {
+            Some(sender) => {
+                // if the send() is successful, send an event to the controller
+                if sender.send(packet.clone()).is_ok() {
+                    // if the send fails, log an error
+                    if self.controller_send.send(DroneEvent::PacketSent(packet)).is_err() {
+                        error!("Drone {} could not send packet to controller", self.id);
+                    }
+                } else {
+                    let result = {
+                        if let PacketType::MsgFragment(_) = packet.pack_type {
+                            self.controller_send.send(DroneEvent::PacketDropped(packet))
+                        } else {
+                            self.controller_send.send(DroneEvent::ControllerShortcut(packet))
+                        }
+                    };
+
+                    if result.is_err() {
+                        error!("Drone {} could not send packet to controller", self.id);
+                    }
+                }
+            },
+            None => {
+                match packet.pack_type {
+                    PacketType::MsgFragment(_) | PacketType::FloodResponse(_) => {
+                        self.generate_nack(
+                            NackType::ErrorInRouting(*next_hop),
+                            packet.routing_header,
+                            packet.session_id
+                        );
+                    },
+                    _ => {
+                        if self.controller_send.send(DroneEvent::ControllerShortcut(packet)).is_err() {
+                            error!("Drone {} could not send packet to controller", self.id);
+                        }
+                    }
+                }
+            }
         }
     }
 }
