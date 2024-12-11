@@ -11,8 +11,6 @@ use wg_2024::network::SourceRoutingHeader;
 use crossbeam_channel::select_biased;
 use crossbeam_channel::{Receiver, Sender};
 use wg_2024::packet::Fragment;
-use std::process;
-
 use std::collections::{HashMap, HashSet};
 
 //use std::ops::Index;
@@ -472,7 +470,7 @@ impl RustDoIt {
 
     fn is_correct_recipient(&self, srh: &SourceRoutingHeader, session_id: u64) -> bool {
         let current_hop = srh.current_hop().unwrap();
-        if current_hop != self.id {
+        if current_hop != self.id || srh.hop_index >= srh.len() {
             self.generate_nack(
                 NackType::UnexpectedRecipient(current_hop),
                 srh.clone(),
