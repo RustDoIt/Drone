@@ -166,7 +166,7 @@ impl RustDoIt {
         }
     }
 
-    fn handle_nack(&mut self, nack: Nack, mut srh: SourceRoutingHeader, session_id: u64) {
+    fn handle_nack(&self, nack: Nack, mut srh: SourceRoutingHeader, session_id: u64) {
         let current_hop = srh.current_hop().unwrap();
         if current_hop != self.id {
             self.generate_nack(
@@ -203,7 +203,7 @@ impl RustDoIt {
         }
     }
 
-    fn handle_ack(&mut self, fragment_index: u64, mut srh: SourceRoutingHeader, session_id: u64) {
+    fn handle_ack(&self, fragment_index: u64, mut srh: SourceRoutingHeader, session_id: u64) {
 
         match &srh.next_hop() {
             None => {
@@ -241,7 +241,7 @@ impl RustDoIt {
 
     }
 
-    fn generate_nack(&mut self, nack_type: NackType, mut srh: SourceRoutingHeader, session_id: u64) {
+    fn generate_nack(&self, nack_type: NackType, mut srh: SourceRoutingHeader, session_id: u64) {
         let nack = Nack {
             fragment_index: 0,
             nack_type,
@@ -271,7 +271,7 @@ impl RustDoIt {
         }
     }
 
-    fn handle_fragment(&mut self, mut srh: SourceRoutingHeader, fragment: Fragment, session_id: u64) {
+    fn handle_fragment(&self, mut srh: SourceRoutingHeader, fragment: Fragment, session_id: u64) {
         let current_hop = srh.current_hop().unwrap();
         if current_hop != self.id {
             self.generate_nack(
@@ -336,16 +336,20 @@ impl RustDoIt {
         srh: SourceRoutingHeader,
         session_id: u64
     ) {
-        let prev_hop = flood_request.clone().path_trace.last().unwrap().0;
-        let flood_session = (flood_request.flood_id, flood_request.initiator_id);
 
+
+        let prev_hop = flood_request.clone().path_trace.last().unwrap().0;
+
+        if !flood_request.path_trace.contains(&(self.id, NodeType::Drone)) {
+            flood_request.path_trace.push((self.id, NodeType::Drone));
+        }
+
+        let flood_session = (flood_request.flood_id, flood_request.initiator_id);
         if self.flood_session.contains(&flood_session) {
             self.generate_flood_response(flood_request, session_id);
             return;
         }
         self.flood_session.insert(flood_session);
-        flood_request.path_trace.push((self.id, NodeType::Drone));
-
 
         if self.packet_send.len() == 1 {
             self.generate_flood_response(flood_request, session_id);
@@ -368,7 +372,7 @@ impl RustDoIt {
         }
     }
 
-    fn generate_flood_response(&mut self, flood_request: FloodRequest, session_id: u64) {
+    fn generate_flood_response(&self, flood_request: FloodRequest, session_id: u64) {
         let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
         route.reverse();
 
@@ -407,7 +411,7 @@ impl RustDoIt {
     }
 
     fn handle_flood_response(
-            &mut self,
+            &self,
             flood_response: FloodResponse,
             mut srh: SourceRoutingHeader,
             session_id: u64,
