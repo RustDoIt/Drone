@@ -1,3 +1,21 @@
+# Usage
+
+Add this to your `Cargo.toml`:
+```toml
+[dependencies]
+rust_do_it = { git = "https://github.com/RustDoIt/Drone.git" }
+```
+
+Use it in your code:
+```rust
+use rust_do_it::RustDoIt;
+```
+
+## Support
+Joins us in the [Discord](https://discord.gg/BqYCqKPc) channel. <br>
+Go in the `ticket` chat and type `/help` to get more info.
+
+
 # Contacts
 
 Matteo Beltrami - [matteo.beltrami-1@studenti.unitn.it](mailto:matteo.beltrami-1@studenti.unitn.it)
