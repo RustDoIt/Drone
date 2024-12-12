@@ -4,11 +4,9 @@ use log::{info, warn, error, debug};
 use rand::Rng;
 use wg_2024::drone::{Drone};
 use wg_2024::controller::{DroneCommand, DroneEvent};
-use wg_2024::network::NodeId;
+use wg_2024::network::{NodeId, SourceRoutingHeader};
 use wg_2024::packet::{Nack, NackType, Packet, PacketType, NodeType, FloodRequest, FloodResponse};
-use wg_2024::network::SourceRoutingHeader;
-use crossbeam_channel::select_biased;
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{select_biased, Receiver, Sender};
 use std::collections::{HashMap, HashSet};
 use super::RustDoIt;
 
@@ -82,7 +80,7 @@ impl RustDoIt {
 
             PacketType::MsgFragment(_) => self.handle_fragment(packet),
 
-            _ => self.handle_packet_forwarding(packet)
+            _ => self.check_packet(packet)
 
         }
     }
@@ -115,13 +113,13 @@ impl RustDoIt {
                 }
             },
 
-            _ => self.handle_packet_forwarding(packet)
+            _ => self.check_packet(packet)
 
         }
     }
 
-    fn handle_packet_forwarding(&self, mut packet: Packet) {
-        /// This function handles the packet forwarding
+    fn check_packet(&self, mut packet: Packet) {
+        /// This function is responsible for checking the packet before forwarding it.
         /// It checks if the packet is for this drone and
         /// if the next hop is in the list of neighbours
         /// if the next hop is not in the list of neighbours,
@@ -314,7 +312,7 @@ impl RustDoIt {
                 srh.hops.reverse();
                 srh.hop_index = 1;
             },
-            _ => {
+            NackType::DestinationIsDrone => {
                 // reverse the trace
                 srh = srh.sub_route(0..=srh.hop_index).unwrap();
                 srh.hops.reverse();

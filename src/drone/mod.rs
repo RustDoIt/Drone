@@ -17,7 +17,7 @@ pub struct RustDoIt {
     controller_recv: Receiver<DroneCommand>,            // Used to receive commands from the controller (sender is in the controller)
     packet_recv: Receiver<Packet>,                      // The receiving end of the channel for receiving packets from drones
     packet_send: HashMap<NodeId, Sender<Packet>>,       // Mapping of drone IDs to senders, allowing packets to be sent to specific drones
-    flood_session: HashSet<(u64,NodeId)>,
+    flood_session: HashSet<(u64, NodeId)>,
     pdr: f32,
 }
 
@@ -64,6 +64,5 @@ impl Drone for RustDoIt {
                 }
             }
         }
-
     }
 }
