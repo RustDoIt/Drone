@@ -13,7 +13,7 @@ mod test {
     use std::collections::HashMap;
     use std::thread;
     use wg_2024::packet::PacketType::{FloodRequest, FloodResponse};
-    use crate::rust_do_it::RustDoIt;
+    use crate::drone::RustDoIt;
 
     fn create_sample_packet() -> Packet {
         Packet {
