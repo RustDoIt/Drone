@@ -34,6 +34,12 @@ impl RustDoIt {
                 if pdr >= 0.0 && pdr <= 1.0 {
                     self.pdr = pdr;
                     debug!("Drone {} set PDR to {}", self.id, self.pdr);
+                } else {
+                    warn!(
+                        "Drone {} could not set PDR to {}, value must be between 0.0 and 1.0",
+                        self.id,
+                        pdr
+                    );
                 }
             },
 
@@ -48,6 +54,12 @@ impl RustDoIt {
             DroneCommand::RemoveSender(node_id) => {
                 if let Some(_removed_sender) = self.packet_send.remove(&node_id) {
                     debug!("Drone {} removed sender {}", self.id, node_id);
+                } else {
+                    warn!(
+                        "Drone {} could not remove sender {} because it is not a neighbour",
+                        self.id,
+                        node_id
+                    );
                 }
             },
         }
@@ -95,7 +107,12 @@ impl RustDoIt {
                     packet.routing_header.clone(),
                     packet.session_id
                 );
-                let _ = self.controller_send.send(DroneEvent::PacketDropped(packet));
+                let result = self.controller_send
+                    .send(DroneEvent::PacketDropped(packet));
+
+                if result.is_err() {
+                    error!("Drone {} could not send packet to controller", self.id);
+                }
             },
 
             _ => self.handle_packet_forwarding(packet)
@@ -200,7 +217,6 @@ impl RustDoIt {
         }
     }
 
-    /// This function handles the flood request and forwards it to the next hop
     fn handle_flood_request(
         &mut self,
         mut flood_request: FloodRequest,
@@ -216,7 +232,12 @@ impl RustDoIt {
         /// - `srh`: The source routing header of the packet
         /// - `session_id`: The session id of the packet
 
-        let prev_hop = flood_request.clone().path_trace.last().unwrap().0;
+        let prev_hop = if flood_request.path_trace.last().is_some() {
+            flood_request.path_trace.last().unwrap().0
+        } else {
+            error!("Drone {} received flood request with empty path trace", self.id);
+            return;
+        };
 
         flood_request.path_trace.push((self.id, NodeType::Drone));
 
@@ -306,6 +327,9 @@ impl RustDoIt {
             session_id,
             nack,
         );
+
+        // get the next hop (use current_hop() instead of next_hop() because
+        // the hop index is reset to 1)
         let next_hop = &new_nack.routing_header.current_hop().unwrap();
 
         // send nack to next hop, if send fails, send to controller
@@ -417,7 +441,7 @@ impl RustDoIt {
                 // NackType::ErrorInRouting and send it back to the source
                 self.generate_nack(
                     NackType::ErrorInRouting(*next_hop),
-                    packet.routing_header.clone(),
+                    packet.routing_header,
                     packet.session_id
                 );
             }
