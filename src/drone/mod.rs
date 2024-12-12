@@ -9,7 +9,7 @@ use wg_2024::network::NodeId;
 use wg_2024::network::SourceRoutingHeader;
 use wg_2024::packet::{FloodRequest, FloodResponse, Nack, NackType, NodeType, Packet, PacketType};
 
-pub mod rust_do_it;
+pub mod rust_do_it; 
 #[derive(Debug)]
 pub struct RustDoIt {
     id: NodeId,
