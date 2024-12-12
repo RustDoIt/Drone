@@ -167,7 +167,7 @@ mod test {
             drone.run();
         });
 
-        let msg = create_sample_packet();
+        let mut msg = create_sample_packet();
 
         // "Client" sends packet to the drone
         d_send.send(msg.clone()).unwrap();
@@ -185,6 +185,8 @@ mod test {
             routing_header: srh,
             session_id: 1,
         };
+
+        msg.routing_header.hop_index += 1;
 
         let packet_sent_event = DroneEvent::PacketSent(nack_packet.clone());
         let packet_drop_event = DroneEvent::PacketDropped(msg.clone());
@@ -260,12 +262,14 @@ mod test {
         let (d12_send, d12_recv) = unbounded();
         // SC - needed to not make the drone crash
         let (d_command_send, d_command_recv) = unbounded();
+        let (d_event_send, d_event_recv) = unbounded();
+
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
         let mut drone1 = RustDoIt::new(
             11,
-            unbounded().0,
+            d_event_send.clone(),
             d_command_recv.clone(),
             d_recv.clone(),
             neighbours11,
@@ -275,7 +279,7 @@ mod test {
         let neighbours12 = HashMap::from([(11, d_send.clone()), (21, s_send.clone())]);
         let mut drone2 = RustDoIt::new(
             12,
-            unbounded().0,
+            d_event_send.clone(),
             d_command_recv.clone(),
             d12_recv.clone(),
             neighbours12,
@@ -290,13 +294,13 @@ mod test {
             drone2.run();
         });
 
-        let msg = create_sample_packet();
+        let mut msg = create_sample_packet();
 
         // "Client" sends packet to the drone1
         d_send.send(msg.clone()).unwrap();
 
         // Client receive an NACK originated from drone2
-        let packet_true = Packet {
+        let mut packet_true = Packet {
             pack_type: PacketType::Nack(Nack {
                 fragment_index: 0,
                 nack_type: NackType::Dropped,
@@ -310,6 +314,24 @@ mod test {
 
         let packet_got = c_recv.recv().unwrap();
         assert_eq!(packet_true, packet_got);
+
+        msg.routing_header.increase_hop_index();
+        let packet_sent_event = DroneEvent::PacketSent(msg.clone());
+
+        msg.routing_header.increase_hop_index();
+        let packet_drop_event = DroneEvent::PacketDropped(msg.clone());
+        let packet_sent = d_event_recv.recv().unwrap();
+        let packet_dropped = d_event_recv.recv().unwrap();
+        packet_true.routing_header.decrease_hop_index();
+        let nack_sent = d_event_recv.recv().unwrap();
+
+        assert_eq!(packet_sent_event, packet_sent);
+        assert_eq!(packet_drop_event, packet_dropped);
+        assert_eq!(nack_sent, DroneEvent::PacketSent(packet_true.clone()));
+        packet_true.routing_header.increase_hop_index();
+        let nack_sent = d_event_recv.recv().unwrap();
+        assert_eq!(nack_sent, DroneEvent::PacketSent(packet_true.clone()));
+
         d_command_send.send(DroneCommand::Crash).unwrap();
         d_command_send.send(DroneCommand::Crash).unwrap();
     }
@@ -387,7 +409,7 @@ mod test {
         // Drone 13
         let (d13_send, d13_recv) = unbounded();
         // SC - needed to not make the drone crash
-        let (d_command_send, d_command_recv) = unbounded();
+        let (_d_command_send, d_command_recv) = unbounded();
 
         let (d_event_send, d_event_recv) = unbounded();
 

@@ -9,7 +9,6 @@ use wg_2024::packet::{Nack, NackType, Packet, PacketType, NodeType, FloodRequest
 use wg_2024::network::SourceRoutingHeader;
 use crossbeam_channel::select_biased;
 use crossbeam_channel::{Receiver, Sender};
-use wg_2024::packet::Fragment;
 use std::collections::{HashMap, HashSet};
 
 
@@ -75,8 +74,13 @@ impl Drone for RustDoIt {
 
 impl RustDoIt {
 
-    /// This function handles the commands sent by the controller
     fn handle_command(&mut self, command: DroneCommand) {
+        /// This function handles the command received from the controller
+        /// It checks the command type and takes the appropriate actions
+        /// to handle the command
+        /// ### Parameters:
+        /// - `command`: The command to be handled
+
         match command {
             DroneCommand::AddSender(node_id, sender) => {
                 if !self.packet_send.contains_key(&node_id) {
@@ -108,34 +112,25 @@ impl RustDoIt {
         }
     }
 
-    /// This function handles the packet
+
     fn handle_packet(&mut self, packet: Packet) {
+        /// This function handles the received packet
+        /// It checks the packet type and calls the appropriate function
+        /// to handle the packet
+        /// ### Parameters:
+        /// - `packet`: The packet to be handled
 
         match packet.pack_type {
-            PacketType::Ack(ack) => self.handle_ack(
-                ack.fragment_index,
-                packet.routing_header,
-                packet.session_id
-            ),
-            PacketType::Nack(nack) => self.handle_nack(
-                nack,
-                packet.routing_header,
-                packet.session_id
-            ),
             PacketType::FloodRequest(flood_request) => self.handle_flood_request(
                 flood_request,
                 packet.routing_header,
                 packet.session_id
             ),
-            PacketType::FloodResponse(flood_response) => self.handle_flood_response(
-                flood_response,
-                packet.routing_header,
-                packet.session_id
-            ),
-            PacketType::MsgFragment(fragment) => self.handle_fragment(
-                packet.routing_header,
-                fragment, packet.session_id
-            ),
+
+            PacketType::MsgFragment(_) => self.handle_fragment(packet),
+
+            _ => self.handle_packet_forwarding(packet)
+
         }
     }
 
@@ -153,19 +148,6 @@ impl RustDoIt {
                 }
             },
 
-            PacketType::Ack(ack) => {
-                self.handle_ack(
-                    ack.fragment_index,
-                    packet.routing_header,
-                    packet.session_id
-                );
-            }
-            PacketType::Nack(nack) => self.handle_nack(
-                nack,
-                packet.routing_header,
-                packet.session_id
-            ),
-
             PacketType::FloodRequest(_) => {
                 self.generate_nack(
                     NackType::ErrorInRouting(self.id),
@@ -175,162 +157,104 @@ impl RustDoIt {
                 let _ = self.controller_send.send(DroneEvent::PacketDropped(packet));
             },
 
-            PacketType::FloodResponse(flood_response) => self.handle_flood_response(
-                flood_response,
-                packet.routing_header,
-                packet.session_id
-            )
+            _ => self.handle_packet_forwarding(packet)
+
         }
     }
 
-    /// This function forward the nack to the next hop
-    fn handle_nack(&self, nack: Nack, mut srh: SourceRoutingHeader, session_id: u64) {
-        // step 1: check if the drone is the correct recipient
-        if !self.is_correct_recipient(&srh, session_id) {
+    fn handle_packet_forwarding(&self, mut packet: Packet) {
+        /// This function handles the packet forwarding
+        /// It checks if the packet is for this drone and
+        /// if the next hop is in the list of neighbours
+        /// if the next hop is not in the list of neighbours,
+        /// it generates a nack of type NackType::ErrorInRouting
+        /// else increases the hop index and forwards the packet to the next hop
+        /// ### Parameters:
+        /// - `packet`: The packet to be forwarded
+
+        // Step 1: Check if the packet is for this drone
+        if !self.is_correct_recipient(&packet.routing_header, packet.session_id) {
             return;
         }
 
-        // step 3: check if the destination is legit
-        match &srh.next_hop() {
+        // Step 2: Check if there is a next node
+        match &packet.routing_header.next_hop() {
             None => {
-                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                // if there is no next hop, generate a nack with NackType::DestinationIsDrone
+                self.generate_nack(
+                    NackType::DestinationIsDrone,
+                    packet.routing_header,
+                    packet.session_id
+                );
                 return;
             },
             Some(next_hop) => {
-
-                // step 2: increase the hop index
-                srh.increase_hop_index();
-
-                let new_nack = Packet::new_nack(
-                    srh,
-                    session_id,
-                    nack,
-                );
-
-                self.forward_packet(new_nack, next_hop);
+                // Step 3: increase the hop index
+                packet.routing_header.increase_hop_index();
+                self.forward_packet(packet, next_hop);
             }
         }
     }
 
-    /// This function forward the ack to the next hop
-    fn handle_ack(&self, fragment_index: u64, mut srh: SourceRoutingHeader, session_id: u64) {
-        if !self.is_correct_recipient(&srh, session_id) {
+    fn handle_fragment(&self, mut msg_packet: Packet) {
+        /// This function handles the message fragment
+        /// It checks if the packet is for this drone and
+        /// if the next hop is in the list of neighbours
+        /// than increases the hop index, checks if the packet should be dropped
+        /// if the packet should be dropped, it generates a nack of type NackType::Dropped
+        /// and sends it back to the source else it forwards the packet to the next hop
+        /// ### Parameters:
+        /// - `msg_packet`: The message packet
+
+
+        // Step 1: Check if the packet is for this drone
+        if !self.is_correct_recipient(&msg_packet.routing_header, msg_packet.session_id) {
             return;
         }
 
-        match &srh.next_hop() {
+        // Step 3: Check if there is a next node
+        match &msg_packet.routing_header.next_hop() {
             None => {
-                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                // if there is no next hop, generate a nack with NackType::DestinationIsDrone
+                self.generate_nack(
+                    NackType::DestinationIsDrone,
+                    msg_packet.routing_header,
+                    msg_packet.session_id
+                );
                 return;
             },
             Some(next_hop) => {
-                srh.increase_hop_index();
+                // Step 2: Increase the hop index
+                msg_packet.routing_header.increase_hop_index();
 
-                if !srh.valid_hop_index() {
-                    self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                // Step 4: Check if the next hop is in the list of neighbours
+                if !self.packet_send.contains_key(&next_hop){
+                    self.generate_nack(
+                        NackType::ErrorInRouting(*next_hop),
+                        msg_packet.routing_header,
+                        msg_packet.session_id
+                    );
                     return;
                 }
 
-                let new_ack = Packet::new_ack(
-                    srh,
-                    session_id,
-                    fragment_index,
-                );
-
-                self.forward_packet(new_ack, next_hop);
-            }
-        }
-
-
-    }
-
-    /// This function generates a nack and sends it to the next hop
-    fn generate_nack(&self, nack_type: NackType, mut srh: SourceRoutingHeader, session_id: u64) {
-        let nack = Nack {
-            fragment_index: 0,
-            nack_type,
-        };
-
-        match nack_type {
-            NackType::ErrorInRouting(_) => {
-                // reverse the trace
-                srh = srh.sub_route(0..srh.hop_index).unwrap();
-                srh.hops.reverse();
-                srh.hop_index = 1;
-            },
-            NackType::UnexpectedRecipient(_) => {
-                // reverse the trace
-                srh = srh.sub_route(0..=srh.hop_index).unwrap();
-                srh.hops.pop();
-                srh.hops.push(self.id);
-                srh.hops.reverse();
-                srh.hop_index = 1;
-            },
-            _ => {
-                // reverse the trace
-                srh = srh.sub_route(0..=srh.hop_index).unwrap();
-                srh.hops.reverse();
-                srh.hop_index = 1;
-            }
-        }
-
-        let new_nack = Packet::new_nack(
-            srh,
-            session_id,
-            nack,
-        );
-        let next_hop = &new_nack.routing_header.current_hop().unwrap();
-
-        // send nack to next hop, if send fails, send to controller
-        self.forward_packet(new_nack, next_hop);
-
-    }
-
-    /// This function handles the fragment and forwards it to the next hop
-    fn handle_fragment(&self, mut srh: SourceRoutingHeader, fragment: Fragment, session_id: u64) {
-        if !self.is_correct_recipient(&srh, session_id) {
-            return;
-        }
-
-        match &srh.next_hop() {
-            None => {
-                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
-                return;
-            },
-            Some(next_hop) => {
+                // Step 5: Check if the packet should be dropped
                 let drop = rand::thread_rng().gen_range(0.0..1.0);
                 if drop <= self.pdr {
 
-                    let dropped_fragment = Packet::new_fragment(
-                        srh,
-                        session_id,
-                        fragment,
-                    );
-                    let _ = self.controller_send.send(
-                        DroneEvent::PacketDropped(dropped_fragment.clone())
-                    );
+                    if self.controller_send
+                        .send(DroneEvent::PacketDropped(msg_packet.clone()))
+                        .is_err() {
+                        error!("Drone {} could not send packet to controller", self.id);
+                    }
                     self.generate_nack(
                         NackType::Dropped,
-                        dropped_fragment.routing_header,
-                        session_id
+                        msg_packet.routing_header,
+                        msg_packet.session_id
                     );
                     return;
                 }
 
-                srh.increase_hop_index();
-
-                if !srh.valid_hop_index() {
-                    self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
-                    return;
-                }
-
-                let new_fragment = Packet::new_fragment(
-                    srh,
-                    session_id,
-                    fragment,
-                );
-
-                self.forward_packet(new_fragment, next_hop);
+                self.forward_packet(msg_packet, next_hop);
             }
         }
     }
@@ -342,13 +266,19 @@ impl RustDoIt {
         srh: SourceRoutingHeader,
         session_id: u64
     ) {
-
+        /// This function handles the flood request and forwards it to the neighbours
+        /// If the drone has already seen the flood request, it generates a flood response
+        /// or if the drone has no other neighbour other than
+        /// the previous hop (the sender of the flood request), it generates a flood response
+        /// ### Parameters:
+        /// - `flood_request`: The flood request
+        /// - `srh`: The source routing header of the packet
+        /// - `session_id`: The session id of the packet
 
         let prev_hop = flood_request.clone().path_trace.last().unwrap().0;
 
-        if !flood_request.path_trace.contains(&(self.id, NodeType::Drone)) {
-            flood_request.path_trace.push((self.id, NodeType::Drone));
-        }
+        flood_request.path_trace.push((self.id, NodeType::Drone));
+
 
         let flood_session = (flood_request.flood_id, flood_request.initiator_id);
         if self.flood_session.contains(&flood_session) {
@@ -382,9 +312,76 @@ impl RustDoIt {
         }
     }
 
-    /// This function generates a flood response and sends it to the next hop
+    fn generate_nack(&self, nack_type: NackType, mut srh: SourceRoutingHeader, session_id: u64) {
+        /// This function generates a nack of type: nack_type, and sends it to the next hop
+        /// ### Parameters:
+        /// - `nack_type`: The type of nack to be generated
+        /// - `srh`: The source routing header of the packet
+        /// - `session_id`: The session id of the packet
+
+        let nack = Nack {
+            fragment_index: 0,
+            nack_type,
+        };
+
+        // if the route is malformed, send a nack to the controller
+        if srh.len() == 1 {
+            let new_nack = Packet::new_nack(
+                srh,
+                session_id,
+                nack,
+            );
+            if self.controller_send.send(DroneEvent::ControllerShortcut(new_nack)).is_err() {
+                error!("Drone {} could not send packet to controller", self.id);
+            }
+            return;
+        }
+
+        match nack_type {
+            NackType::ErrorInRouting(_) | NackType::Dropped => {
+                // reverse the trace
+                srh = srh.sub_route(0..srh.hop_index).unwrap();
+                srh.hops.reverse();
+                srh.hop_index = 1;
+            },
+            NackType::UnexpectedRecipient(_) => {
+                // reverse the trace
+                srh = srh.sub_route(0..=srh.hop_index).unwrap();
+                srh.hops.pop();
+                srh.hops.push(self.id);
+                srh.hops.reverse();
+                srh.hop_index = 1;
+            },
+            _ => {
+                // reverse the trace
+                srh = srh.sub_route(0..=srh.hop_index).unwrap();
+                srh.hops.reverse();
+                srh.hop_index = 1;
+            }
+        }
+
+        let new_nack = Packet::new_nack(
+            srh,
+            session_id,
+            nack,
+        );
+        let next_hop = &new_nack.routing_header.current_hop().unwrap();
+
+        // send nack to next hop, if send fails, send to controller
+        self.forward_packet(new_nack, next_hop);
+
+    }
+
     fn generate_flood_response(&self, flood_request: FloodRequest, session_id: u64) {
-        let mut route: Vec<_> = flood_request.path_trace.iter().map(|(id, _)| *id).collect();
+        /// This function generates a flood response and sends it to the next hop
+        /// ### Parameters:
+        /// - `flood_request`: The flood request
+        /// - `session_id`: The session id of the packet
+
+        let mut route: Vec<_> = flood_request.path_trace.
+            iter()
+            .map(|(id, _)| *id)
+            .collect();
         route.reverse();
 
         let flood_response = FloodResponse {
@@ -410,36 +407,17 @@ impl RustDoIt {
         }
     }
 
-    /// This function handles the flood response and forwards it to the next hop
-    fn handle_flood_response(
-            &self,
-            flood_response: FloodResponse,
-            mut srh: SourceRoutingHeader,
-            session_id: u64,
-        ) {
-
-        if !self.is_correct_recipient(&srh, session_id) {
-            return;
-        }
-
-        match &srh.next_hop() {
-            None => {
-                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
-                return;
-            }
-            Some(next_hop) => {
-                srh.increase_hop_index();
-                let flood_response_packet = Packet::new_flood_response(
-                    srh,
-                    session_id,
-                    flood_response
-                );
-                self.forward_packet(flood_response_packet, next_hop);
-            }
-        }
-    }
-
     fn is_correct_recipient(&self, srh: &SourceRoutingHeader, session_id: u64) -> bool {
+        /// This function checks if the packet is for this drone
+        /// If the packet is not for this drone, a nack of type
+        /// NackType::UnexpectedRecipient is generated and sent back to the source
+        /// ### Parameters:
+        /// - `srh`: The source routing header of the packet
+        /// - `session_id`: The session id of the packet
+        ///
+        /// ### Returns:
+        /// - `bool`: True if the packet is for this drone, false otherwise
+
         let current_hop = srh.current_hop();
         if current_hop.is_some() && current_hop != Some(self.id) {
             self.generate_nack(
@@ -451,11 +429,6 @@ impl RustDoIt {
         } else {
             if current_hop.is_none() {
                 error!("Drone {} received packet with empty route", self.id);
-                self.generate_nack(
-                    NackType::UnexpectedRecipient(current_hop.unwrap()),
-                    srh.clone(),
-                    session_id
-                );
                 return false;
             }
             true
@@ -467,6 +440,13 @@ impl RustDoIt {
         packet: Packet,
         next_hop: &NodeId,
     ) {
+        /// This function is responsible for forwarding the packet to the next hop
+        /// If the next hop is not in the list of neighbours, a nack is generated
+        /// and sent back to the source
+        /// ### Parameters:
+        /// - `packet`: The packet to be forwarded
+        /// - `next_hop`: The next hop id to which the packet should be forwarded
+
         // step 4: Identify the sender and check if is valid
         match self.packet_send.get(next_hop) {
             Some(sender) => {
@@ -492,23 +472,13 @@ impl RustDoIt {
                 }
             },
             None => {
-
                 // step 4.1: if the next hop is not in the list of neighbours, generate a nack with
                 // NackType::ErrorInRouting and send it back to the source
-                match packet.pack_type {
-                    PacketType::MsgFragment(_) => {
-                        self.generate_nack(
-                            NackType::ErrorInRouting(*next_hop),
-                            packet.routing_header,
-                            packet.session_id
-                        );
-                    },
-                    _ => {
-                        if self.controller_send.send(DroneEvent::ControllerShortcut(packet)).is_err() {
-                            error!("Drone {} could not send packet to controller", self.id);
-                        }
-                    }
-                }
+                self.generate_nack(
+                    NackType::ErrorInRouting(*next_hop),
+                    packet.routing_header.clone(),
+                    packet.session_id
+                );
             }
         }
     }
