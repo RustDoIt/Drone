@@ -1,19 +1,19 @@
 #[cfg(test)]
 mod test {
-    use wg_2024::drone::{Drone};
     use wg_2024::controller::{DroneCommand, DroneEvent};
+    use wg_2024::drone::Drone;
     //use wg_2024::controller;
     use wg_2024::network::NodeId;
-    use wg_2024::packet::{Ack, Nack, NackType, Packet, PacketType, NodeType};
+    use wg_2024::packet::{Ack, Nack, NackType, NodeType, Packet, PacketType};
     //use wg_2024::config::{Config};
-    use wg_2024::network::{SourceRoutingHeader};
     use crossbeam_channel::unbounded;
+    use wg_2024::network::SourceRoutingHeader;
 
-    use wg_2024::packet::Fragment;
+    use crate::drone::RustDoIt;
     use std::collections::HashMap;
     use std::thread;
+    use wg_2024::packet::Fragment;
     use wg_2024::packet::PacketType::{FloodRequest, FloodResponse};
-    use crate::drone::RustDoIt;
 
     fn create_sample_packet() -> Packet {
         Packet {
@@ -31,20 +31,14 @@ mod test {
         }
     }
 
-    fn create_custom_routing_header(
-        hop_index: usize,
-        hops: Vec<NodeId>
-    ) -> SourceRoutingHeader {
-        SourceRoutingHeader {
-            hop_index,
-            hops
-        }
+    fn create_custom_routing_header(hop_index: usize, hops: Vec<NodeId>) -> SourceRoutingHeader {
+        SourceRoutingHeader { hop_index, hops }
     }
 
     fn create_custom_packet(
         source_routing_header: SourceRoutingHeader,
         packet_type: PacketType,
-        session_id: u64
+        session_id: u64,
     ) -> Packet {
         Packet {
             pack_type: packet_type,
@@ -90,7 +84,6 @@ mod test {
 
         d_command_send.send(DroneCommand::Crash).unwrap()
     }
-
 
     #[test]
     //#[cfg(feature = "partial_eq")]
@@ -150,7 +143,6 @@ mod test {
         // SC commands
         let (d_command_send, d_command_recv) = unbounded();
         let (d_event_send, d_event_recv) = unbounded();
-
 
         let neighbours = HashMap::from([(12, d_send.clone()), (1, c_send.clone())]);
         let mut drone = RustDoIt::new(
@@ -217,16 +209,12 @@ mod test {
             0.0,
         );
 
-
         thread::spawn(move || {
             drone.run();
         });
 
-
         let mut ack = Packet {
-            pack_type: PacketType::Ack(Ack {
-                fragment_index: 1,
-            }),
+            pack_type: PacketType::Ack(Ack { fragment_index: 1 }),
             routing_header: SourceRoutingHeader {
                 hop_index: 1,
                 hops: vec![1, 11, 12],
@@ -263,7 +251,6 @@ mod test {
         // SC - needed to not make the drone crash
         let (d_command_send, d_command_recv) = unbounded();
         let (d_event_send, d_event_recv) = unbounded();
-
 
         // Drone 11
         let neighbours11 = HashMap::from([(12, d12_send.clone()), (1, c_send.clone())]);
@@ -394,7 +381,6 @@ mod test {
         d_command_send.send(DroneCommand::Crash).unwrap()
     }
 
-
     #[test]
     /// Test the forward of a flood request coming from drone1, forwarded to drone2 and drone3
     pub fn flood_request_forward() {
@@ -413,9 +399,12 @@ mod test {
 
         let (d_event_send, d_event_recv) = unbounded();
 
-
         // Drone 11
-        let neighbours11 = HashMap::from([(12, d12_send.clone()), (13, d13_send.clone()), (1, c_send.clone())]);
+        let neighbours11 = HashMap::from([
+            (12, d12_send.clone()),
+            (13, d13_send.clone()),
+            (1, c_send.clone()),
+        ]);
         let mut drone1 = RustDoIt::new(
             11,
             d_event_send.clone(),
@@ -459,12 +448,11 @@ mod test {
 
         let flood_request = create_custom_packet(
             srh,
-            FloodRequest(
-                wg_2024::packet::FloodRequest {
-                    flood_id: 0,
-                    initiator_id: 1,
-                    path_trace: vec![(1, NodeType::Client)],
-                }),
+            FloodRequest(wg_2024::packet::FloodRequest {
+                flood_id: 0,
+                initiator_id: 1,
+                path_trace: vec![(1, NodeType::Client)],
+            }),
             0,
         );
 
@@ -472,32 +460,34 @@ mod test {
         d_send11.send(flood_request.clone()).unwrap();
 
         let mut packet_true_1 = flood_request.clone();
-        packet_true_1.pack_type = FloodRequest(
-            wg_2024::packet::FloodRequest {
-                flood_id: 0,
-                initiator_id: 1,
-                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone)],
-            }
-        );
+        packet_true_1.pack_type = FloodRequest(wg_2024::packet::FloodRequest {
+            flood_id: 0,
+            initiator_id: 1,
+            path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone)],
+        });
 
         // Server receives a packet with the same content of msg but with hop_index+2
         let mut packet_true_2 = flood_request.clone();
-        packet_true_2.pack_type = FloodRequest(
-            wg_2024::packet::FloodRequest {
-                flood_id: 0,
-                initiator_id: 1,
-                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone)],
-            }
-        );
+        packet_true_2.pack_type = FloodRequest(wg_2024::packet::FloodRequest {
+            flood_id: 0,
+            initiator_id: 1,
+            path_trace: vec![
+                (1, NodeType::Client),
+                (11, NodeType::Drone),
+                (12, NodeType::Drone),
+            ],
+        });
 
         let mut packet_true_3 = flood_request.clone();
-        packet_true_3.pack_type = FloodRequest(
-            wg_2024::packet::FloodRequest {
-                flood_id: 0,
-                initiator_id: 1,
-                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (13, NodeType::Drone)],
-            }
-        );
+        packet_true_3.pack_type = FloodRequest(wg_2024::packet::FloodRequest {
+            flood_id: 0,
+            initiator_id: 1,
+            path_trace: vec![
+                (1, NodeType::Client),
+                (11, NodeType::Drone),
+                (13, NodeType::Drone),
+            ],
+        });
         let packet_got = s_recv.recv().unwrap();
         assert!(packet_got == packet_true_2 || packet_got == packet_true_3);
         let packet_got = s_recv.recv().unwrap();
@@ -508,9 +498,15 @@ mod test {
         let packet_event = d_event_recv.recv().unwrap();
         assert_eq!(packet_event, DroneEvent::PacketSent(packet_true_1.clone()));
         let packet_event = d_event_recv.recv().unwrap();
-        assert!(packet_event == DroneEvent::PacketSent(packet_true_2.clone()) || packet_event == DroneEvent::PacketSent(packet_true_3.clone()));
+        assert!(
+            packet_event == DroneEvent::PacketSent(packet_true_2.clone())
+                || packet_event == DroneEvent::PacketSent(packet_true_3.clone())
+        );
         let packet_event = d_event_recv.recv().unwrap();
-        assert!(packet_event == DroneEvent::PacketSent(packet_true_2.clone()) || packet_event == DroneEvent::PacketSent(packet_true_3.clone()));
+        assert!(
+            packet_event == DroneEvent::PacketSent(packet_true_2.clone())
+                || packet_event == DroneEvent::PacketSent(packet_true_3.clone())
+        );
     }
 
     #[test]
@@ -556,20 +552,23 @@ mod test {
             drone2.run();
         });
 
-        let srh = create_custom_routing_header( // to use in flood_response
-                                                1,
-                                                vec![21, 12, 11, 1],
+        let srh = create_custom_routing_header(
+            // to use in flood_response
+            1,
+            vec![21, 12, 11, 1],
         );
-
 
         let flood_response = create_custom_packet(
             srh,
-            FloodResponse(
-                wg_2024::packet::FloodResponse {
-                    flood_id: 0,
-                    path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone), (21, NodeType::Server)],
-                }
-            ),
+            FloodResponse(wg_2024::packet::FloodResponse {
+                flood_id: 0,
+                path_trace: vec![
+                    (1, NodeType::Client),
+                    (11, NodeType::Drone),
+                    (12, NodeType::Drone),
+                    (21, NodeType::Server),
+                ],
+            }),
             0,
         );
 
@@ -589,7 +588,6 @@ mod test {
     #[test]
     /// Test the generation of a flood response due to an isolated drone (only neighbour the one who sent the flood request)
     pub fn flood_response_isolation() {
-
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Drone 11
@@ -628,38 +626,36 @@ mod test {
             drone2.run();
         });
 
-
-        let srh = create_custom_routing_header( // to use in flood_response
-                                                0,
-                                                vec![],
+        let srh = create_custom_routing_header(
+            // to use in flood_response
+            0,
+            vec![],
         );
 
         let flood_request = create_custom_packet(
             srh,
-            FloodRequest(
-                wg_2024::packet::FloodRequest {
-                    flood_id: 0,
-                    initiator_id: 1,
-                    path_trace: vec![(1, NodeType::Client)],
-                }),
+            FloodRequest(wg_2024::packet::FloodRequest {
+                flood_id: 0,
+                initiator_id: 1,
+                path_trace: vec![(1, NodeType::Client)],
+            }),
             0,
         );
 
         // Client sends packet to the drone
         d_send.send(flood_request.clone()).unwrap();
 
-        let srh = create_custom_routing_header(
-            2,
-            vec![12, 11, 1],
-        );
+        let srh = create_custom_routing_header(2, vec![12, 11, 1]);
         let packet_true = create_custom_packet(
             srh,
-            FloodResponse(
-                wg_2024::packet::FloodResponse {
-                    flood_id: 0,
-                    path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone)],
-                }
-            ),
+            FloodResponse(wg_2024::packet::FloodResponse {
+                flood_id: 0,
+                path_trace: vec![
+                    (1, NodeType::Client),
+                    (11, NodeType::Drone),
+                    (12, NodeType::Drone),
+                ],
+            }),
             0,
         );
 
@@ -686,9 +682,12 @@ mod test {
 
         let (d_event_send, d_event_recv) = unbounded();
 
-
         // Drone 11
-        let neighbours11 = HashMap::from([(12, d12_send.clone()), (13, d13_send.clone()), (1, c_send.clone())]);
+        let neighbours11 = HashMap::from([
+            (12, d12_send.clone()),
+            (13, d13_send.clone()),
+            (1, c_send.clone()),
+        ]);
         let mut drone1 = RustDoIt::new(
             11,
             d_event_send.clone(),
@@ -707,7 +706,11 @@ mod test {
             neighbours12,
             0.0,
         );
-        let neighbours13 = HashMap::from([(11, d11_send.clone()), (12, d12_send.clone()), (21, s_send.clone())]);
+        let neighbours13 = HashMap::from([
+            (11, d11_send.clone()),
+            (12, d12_send.clone()),
+            (21, s_send.clone()),
+        ]);
         let mut drone3 = RustDoIt::new(
             13,
             d_event_send.clone(),
@@ -716,7 +719,6 @@ mod test {
             neighbours13,
             0.0,
         );
-
 
         // Spawn the drone's run method in a separate thread
         thread::spawn(move || {
@@ -729,16 +731,15 @@ mod test {
             drone3.run();
         });
 
-        let srh = create_custom_routing_header(0, vec![], );
+        let srh = create_custom_routing_header(0, vec![]);
 
         let flood_request = create_custom_packet(
             srh,
-            FloodRequest(
-                wg_2024::packet::FloodRequest {
-                    flood_id: 0,
-                    initiator_id: 1,
-                    path_trace: vec![(1, NodeType::Client)],
-                }),
+            FloodRequest(wg_2024::packet::FloodRequest {
+                flood_id: 0,
+                initiator_id: 1,
+                path_trace: vec![(1, NodeType::Client)],
+            }),
             0,
         );
 
@@ -747,23 +748,27 @@ mod test {
 
         // Server receives a packet with the same content of msg but with hop_index+2
         let mut request_11_13 = flood_request.clone();
-        request_11_13.pack_type = FloodRequest(
-            wg_2024::packet::FloodRequest {
-                flood_id: 0,
-                initiator_id: 1,
-                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (13, NodeType::Drone)],
-            }
-        );
+        request_11_13.pack_type = FloodRequest(wg_2024::packet::FloodRequest {
+            flood_id: 0,
+            initiator_id: 1,
+            path_trace: vec![
+                (1, NodeType::Client),
+                (11, NodeType::Drone),
+                (13, NodeType::Drone),
+            ],
+        });
 
         let mut request_11_12_13 = flood_request.clone();
-        request_11_12_13.pack_type = FloodRequest(
-            wg_2024::packet::FloodRequest {
-                flood_id: 0,
-                initiator_id: 1,
-                path_trace: vec![(1, NodeType::Client), (11, NodeType::Drone), (12, NodeType::Drone), (13, NodeType::Drone)],
-            }
-        );
-
+        request_11_12_13.pack_type = FloodRequest(wg_2024::packet::FloodRequest {
+            flood_id: 0,
+            initiator_id: 1,
+            path_trace: vec![
+                (1, NodeType::Client),
+                (11, NodeType::Drone),
+                (12, NodeType::Drone),
+                (13, NodeType::Drone),
+            ],
+        });
 
         let request_got = s_recv.recv().unwrap();
         assert!(request_got == request_11_12_13 || request_got == request_11_13);
@@ -972,8 +977,8 @@ mod test {
 
         d11_send.send(packet.clone()).unwrap();
 
-        let expected = Packet{
-            pack_type: PacketType::Nack(Nack{
+        let expected = Packet {
+            pack_type: PacketType::Nack(Nack {
                 fragment_index: 0,
                 nack_type: NackType::UnexpectedRecipient(12),
             }),
@@ -988,7 +993,7 @@ mod test {
     }
 
     #[test]
-    fn add_sender(){
+    fn add_sender() {
         let (s_send, s_recv) = unbounded();
 
         let (d_send, d_recv) = unbounded();
@@ -1025,9 +1030,11 @@ mod test {
             drone2.run();
         });
 
-        d_command_send.send(DroneCommand::AddSender(12, d2_send)).unwrap();
-        let msg = Packet{
-            pack_type: PacketType::MsgFragment(Fragment{
+        d_command_send
+            .send(DroneCommand::AddSender(12, d2_send))
+            .unwrap();
+        let msg = Packet {
+            pack_type: PacketType::MsgFragment(Fragment {
                 fragment_index: 1,
                 total_n_fragments: 1,
                 length: 128,
@@ -1049,5 +1056,4 @@ mod test {
         d_command_send.send(DroneCommand::Crash).unwrap();
         d_command_send.send(DroneCommand::Crash).unwrap()
     }
-
 }
