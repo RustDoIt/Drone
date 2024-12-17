@@ -11,7 +11,7 @@ Use it in your code:
 use rust_do_it::RustDoIt;
 ```
 
-## Support
+# Support
 Joins us in the [Discord](https://discord.gg/BqYCqKPc) channel. <br>
 Go in the `ticket` chat and type `/help` to get more info.
 
