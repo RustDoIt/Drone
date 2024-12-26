@@ -12,7 +12,7 @@ use rust_do_it::RustDoIt;
 ```
 
 # Support
-Joins us in the [Discord](https://discord.gg/BqYCqKPc) channel. <br>
+Joins us in the [Discord](https://discord.gg/bW4ujYuvJG) channel. <br>
 Go in the `ticket` chat and type `/help` to get more info.
 
 
