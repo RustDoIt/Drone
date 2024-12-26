@@ -165,7 +165,7 @@ mod test {
         d_send.send(msg.clone()).unwrap();
 
         let dropped = Nack {
-            fragment_index: 0,
+            fragment_index: msg.get_fragment_index(),
             nack_type: NackType::Dropped,
         };
         let srh = SourceRoutingHeader {
@@ -289,7 +289,7 @@ mod test {
         // Client receive an NACK originated from drone2
         let mut packet_true = Packet {
             pack_type: PacketType::Nack(Nack {
-                fragment_index: 0,
+                fragment_index: msg.get_fragment_index(),
                 nack_type: NackType::Dropped,
             }),
             routing_header: SourceRoutingHeader {
@@ -839,7 +839,7 @@ mod test {
 
         let expected = Packet {
             pack_type: PacketType::Nack(Nack {
-                fragment_index: 0,
+                fragment_index: packet.get_fragment_index(),
                 nack_type: NackType::DestinationIsDrone,
             }),
             routing_header: SourceRoutingHeader::new(vec![12, 11, 1], 2),
@@ -909,7 +909,7 @@ mod test {
 
         let expected = Packet {
             pack_type: PacketType::Nack(Nack {
-                fragment_index: 0,
+                fragment_index: packet.get_fragment_index(),
                 nack_type: NackType::ErrorInRouting(13),
             }),
             routing_header: SourceRoutingHeader::new(vec![11, 1], 1),
@@ -979,7 +979,7 @@ mod test {
 
         let expected = Packet {
             pack_type: PacketType::Nack(Nack {
-                fragment_index: 0,
+                fragment_index: packet.get_fragment_index(),
                 nack_type: NackType::UnexpectedRecipient(12),
             }),
             routing_header: SourceRoutingHeader::new(vec![11, 1], 1),

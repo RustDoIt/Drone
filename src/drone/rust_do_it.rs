@@ -91,6 +91,7 @@ impl RustDoIt {
             PacketType::MsgFragment(_) => {
                 self.generate_nack(
                     NackType::ErrorInRouting(self.id),
+                    packet.get_fragment_index(),
                     packet.routing_header.clone(),
                     packet.session_id
                 );
@@ -102,6 +103,7 @@ impl RustDoIt {
             PacketType::FloodRequest(_) => {
                 self.generate_nack(
                     NackType::ErrorInRouting(self.id),
+                    packet.get_fragment_index(),
                     packet.routing_header.clone(),
                     packet.session_id
                 );
@@ -129,19 +131,24 @@ impl RustDoIt {
         /// - `packet`: The packet to be forwarded
 
         // Step 1: Check if the packet is for this drone
-        if !self.is_correct_recipient(&packet.routing_header, packet.session_id) {
+        if !self.is_correct_recipient(
+            packet.get_fragment_index(),
+            &packet.routing_header,
+            packet.session_id
+        ) {
             return;
         }
 
         // Step 2: Check if there is a next node
         match &packet.routing_header.next_hop() {
             None => {
-                // if there is no next hop, generate a nack with NackType::DestinationIsDrone
                 self.generate_nack(
                     NackType::DestinationIsDrone,
+                    packet.get_fragment_index(),
                     packet.routing_header,
                     packet.session_id
                 );
+
                 return;
             },
             Some(next_hop) => {
@@ -164,7 +171,11 @@ impl RustDoIt {
 
 
         // Step 1: Check if the packet is for this drone
-        if !self.is_correct_recipient(&msg_packet.routing_header, msg_packet.session_id) {
+        if !self.is_correct_recipient(
+            msg_packet.get_fragment_index(),
+            &msg_packet.routing_header,
+            msg_packet.session_id
+        ) {
             return;
         }
 
@@ -172,8 +183,10 @@ impl RustDoIt {
         match &msg_packet.routing_header.next_hop() {
             None => {
                 // if there is no next hop, generate a nack with NackType::DestinationIsDrone
+
                 self.generate_nack(
                     NackType::DestinationIsDrone,
+                    msg_packet.get_fragment_index(),
                     msg_packet.routing_header,
                     msg_packet.session_id
                 );
@@ -187,6 +200,7 @@ impl RustDoIt {
                 if !self.packet_send.contains_key(&next_hop){
                     self.generate_nack(
                         NackType::ErrorInRouting(*next_hop),
+                        msg_packet.get_fragment_index(),
                         msg_packet.routing_header,
                         msg_packet.session_id
                     );
@@ -202,10 +216,12 @@ impl RustDoIt {
                         .is_err() {
                         error!("Drone {} could not send packet to controller", self.id);
                     }
+
                     self.generate_nack(
                         NackType::Dropped,
+                        msg_packet.get_fragment_index(),
                         msg_packet.routing_header,
-                        msg_packet.session_id
+                        msg_packet.session_id,
                     );
                     return;
                 }
@@ -272,7 +288,13 @@ impl RustDoIt {
         }
     }
 
-    fn generate_nack(&self, nack_type: NackType, mut srh: SourceRoutingHeader, session_id: u64) {
+    fn generate_nack(
+        &self,
+        nack_type: NackType,
+        fragment_index: u64,
+        mut srh: SourceRoutingHeader,
+        session_id: u64
+    ) {
         /// This function generates a nack of type: nack_type, and sends it to the next hop
         /// ### Parameters:
         /// - `nack_type`: The type of nack to be generated
@@ -280,7 +302,7 @@ impl RustDoIt {
         /// - `session_id`: The session id of the packet
 
         let nack = Nack {
-            fragment_index: 0,
+            fragment_index,
             nack_type,
         };
 
@@ -355,7 +377,12 @@ impl RustDoIt {
         let mut srh = SourceRoutingHeader::new(route, 0);
         match &srh.next_hop() {
             None => {
-                self.generate_nack(NackType::DestinationIsDrone, srh, session_id);
+                self.generate_nack(
+                    NackType::DestinationIsDrone,
+                    0,
+                    srh,
+                    session_id
+                );
                 return;
             },
             Some(next_hop) => {
@@ -370,7 +397,12 @@ impl RustDoIt {
         }
     }
 
-    fn is_correct_recipient(&self, srh: &SourceRoutingHeader, session_id: u64) -> bool {
+    fn is_correct_recipient(
+        &self,
+        fragment_index: u64,
+        srh: &SourceRoutingHeader,
+        session_id: u64
+    ) -> bool {
         /// This function checks if the packet is for this drone
         /// If the packet is not for this drone, a nack of type
         /// NackType::UnexpectedRecipient is generated and sent back to the source
@@ -385,6 +417,7 @@ impl RustDoIt {
         if current_hop.is_some() && current_hop != Some(self.id) {
             self.generate_nack(
                 NackType::UnexpectedRecipient(current_hop.unwrap()),
+                fragment_index,
                 srh.clone(),
                 session_id
             );
@@ -439,6 +472,7 @@ impl RustDoIt {
                 // NackType::ErrorInRouting and send it back to the source
                 self.generate_nack(
                     NackType::ErrorInRouting(*next_hop),
+                    packet.get_fragment_index(),
                     packet.routing_header,
                     packet.session_id
                 );
