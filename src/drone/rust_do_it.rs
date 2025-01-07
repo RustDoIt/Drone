@@ -210,9 +210,10 @@ impl RustDoIt {
                 // Step 5: Check if the packet should be dropped
                 let drop = rand::thread_rng().gen_range(0.0..1.0);
                 if drop <= self.pdr {
-
+                    let mut dropped_message = msg_packet.clone();
+                    dropped_message.routing_header.decrease_hop_index();
                     if self.controller_send
-                        .send(DroneEvent::PacketDropped(msg_packet.clone()))
+                        .send(DroneEvent::PacketDropped(dropped_message))
                         .is_err() {
                         error!("Drone {} could not send packet to controller", self.id);
                     }

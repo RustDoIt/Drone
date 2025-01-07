@@ -178,7 +178,7 @@ mod test {
             session_id: 1,
         };
 
-        msg.routing_header.hop_index += 1;
+        // msg.routing_header.hop_index += 1;
 
         let packet_sent_event = DroneEvent::PacketSent(nack_packet.clone());
         let packet_drop_event = DroneEvent::PacketDropped(msg.clone());
@@ -305,7 +305,7 @@ mod test {
         msg.routing_header.increase_hop_index();
         let packet_sent_event = DroneEvent::PacketSent(msg.clone());
 
-        msg.routing_header.increase_hop_index();
+        // msg.routing_header.increase_hop_index();
         let packet_drop_event = DroneEvent::PacketDropped(msg.clone());
         let packet_sent = d_event_recv.recv().unwrap();
         let packet_dropped = d_event_recv.recv().unwrap();
