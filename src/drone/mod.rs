@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use log::{info, warn, error, debug};
-use rand::Rng;
+use log::{warn, error, debug};
 use wg_2024::drone::{Drone};
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::network::NodeId;
-use wg_2024::packet::{Nack, NackType, Packet, PacketType, NodeType, FloodRequest, FloodResponse};
-use wg_2024::network::SourceRoutingHeader;
+use wg_2024::packet::Packet;
 use crossbeam_channel::select_biased;
 use crossbeam_channel::{Receiver, Sender};
 

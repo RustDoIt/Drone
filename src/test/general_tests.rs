@@ -159,7 +159,7 @@ mod test {
             drone.run();
         });
 
-        let mut msg = create_sample_packet();
+        let msg = create_sample_packet();
 
         // "Client" sends packet to the drone
         d_send.send(msg.clone()).unwrap();
