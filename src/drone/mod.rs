@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use log::{warn, error, debug};
+use log::{warn, error, info};
 use wg_2024::drone::{Drone};
 use wg_2024::controller::{DroneCommand, DroneEvent};
 use wg_2024::network::NodeId;
 use wg_2024::packet::Packet;
 use crossbeam_channel::select_biased;
 use crossbeam_channel::{Receiver, Sender};
-
+use std::env;
 pub mod rust_do_it;
 #[derive(Debug)]
 pub struct RustDoIt {
@@ -41,13 +41,14 @@ impl Drone for RustDoIt {
     }
 
     fn run(&mut self) {
+        env::set_var("RUST_LOG", "info");
         loop {
             // Use select_biased to handle incoming commands and packets in normal operation
             select_biased! {
                 recv(self.controller_recv) -> command => {
                     if let Ok(command) = command {
-                        debug!("Drone {} received command {:?}", self.id, command);
-                        if let DroneCommand::Crash = command {
+                        info!("Drone {} received command {:?}", self.id, command);
+                        if matches!(command, DroneCommand::Crash) {
                             self.handle_command(command);
                             return;
                         }
@@ -56,7 +57,7 @@ impl Drone for RustDoIt {
                 },
                 recv(self.packet_recv) -> packet => {
                     if let Ok(packet) = packet {
-                        debug!("Drone {} received packet {:?}", self.id, packet);
+                        info!("Drone {} received packet {:?}", self.id, packet);
                         self.handle_packet(packet);
                     }
                 }

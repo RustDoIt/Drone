@@ -14,7 +14,10 @@ mod test {
     use std::thread;
     use wg_2024::packet::Fragment;
     use wg_2024::packet::PacketType::{FloodRequest, FloodResponse};
-
+    use log::info;
+    fn init() {
+        let _ = env_logger::builder().is_test(true).try_init();
+    }
     fn create_sample_packet() -> Packet {
         Packet {
             pack_type: PacketType::MsgFragment(Fragment {
@@ -51,6 +54,7 @@ mod test {
     //#[cfg(feature = "partial_eq")]
     /// Test forward functionality of a generic packet for a drone
     pub fn generic_packet_forward() {
+        init();
         let (d_send, d_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
         let (d_command_send, d_command_recv) = unbounded();
@@ -89,6 +93,7 @@ mod test {
     //#[cfg(feature = "partial_eq")]
     /// Test forward functionality of a nack for a drone
     pub fn generic_nack_forward() {
+        init();
         let (d1_send, d1_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
         let (d_command_send, d_command_recv) = unbounded();
@@ -136,6 +141,8 @@ mod test {
     //#[cfg(feature = "partial_eq")]
     /// Checks if the packet is dropped by a drone and a Nack is sent back. The drone MUST have 100% packet drop rate, otherwise the test will fail sometimes.
     pub fn generic_fragment_drop() {
+        init();
+
         // Client 1
         let (c_send, c_recv) = unbounded();
         // Drone 11
@@ -193,6 +200,8 @@ mod test {
 
     #[test]
     fn ack_forward() {
+        init();
+
         let (d1_send, d1_recv) = unbounded();
         let (d2_send, d2_recv) = unbounded::<Packet>();
         let (c_send, _c_recv) = unbounded();
@@ -240,6 +249,8 @@ mod test {
     #[test]
     /// Checks if the packet is dropped by the second drone and a Nack is sent back. The first drone must have 0% PDR and the second one 100% PDR, otherwise the test will fail sometimes.
     pub fn generic_chain_fragment_drop() {
+        init();
+
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
@@ -326,6 +337,8 @@ mod test {
     #[test]
     /// Test forward functionality of a generic packet for a chain of drones
     pub fn generic_chain_fragment_forward() {
+        init();
+
         // Client 1 channels
         let (c_send, _c_recv) = unbounded();
         // Server 21 channels
@@ -384,6 +397,8 @@ mod test {
     #[test]
     /// Test the forward of a flood request coming from drone1, forwarded to drone2 and drone3
     pub fn flood_request_forward() {
+        init();
+
         // Client 1 channels
         let (c_send, _c_recv) = unbounded();
         // Server 21 channels
@@ -512,6 +527,8 @@ mod test {
     #[test]
     /// Test the forward of a flood response coming from drone2, forwarded to drone1, forwarded again
     pub fn flood_response_forward() {
+        init();
+
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
@@ -588,6 +605,8 @@ mod test {
     #[test]
     /// Test the generation of a flood response due to an isolated drone (only neighbour the one who sent the flood request)
     pub fn flood_response_isolation() {
+        init();
+
         // Client 1 channels
         let (c_send, c_recv) = unbounded();
         // Drone 11
@@ -668,6 +687,8 @@ mod test {
     #[test]
     /// Test the generation of a flood response due to an already visited hop
     pub fn flood_response_visited() {
+        init();
+
         let (c_send, _c_recv) = unbounded();
         // Server 21 channels
         let (s_send, s_recv) = unbounded();
@@ -784,6 +805,8 @@ mod test {
 
     #[test]
     fn destination_is_drone() {
+        init();
+
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
         let (s_send, _s_recv) = unbounded();
@@ -854,6 +877,8 @@ mod test {
 
     #[test]
     fn error_in_routing() {
+        init();
+
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
         let (s_send, _s_recv) = unbounded();
@@ -924,6 +949,8 @@ mod test {
 
     #[test]
     fn unexpected_recipient() {
+        init();
+
         let (c_send, c_recv) = unbounded();
         // Server 21 channels
         let (s_send, _s_recv) = unbounded();
@@ -994,6 +1021,8 @@ mod test {
 
     #[test]
     fn add_sender() {
+        init();
+
         let (s_send, s_recv) = unbounded();
 
         let (d_send, d_recv) = unbounded();
