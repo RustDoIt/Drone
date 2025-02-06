@@ -246,6 +246,49 @@ mod test {
         assert_eq!(ack, got);
     }
 
+    pub fn ack_to_crashed_sender() {
+        init();
+
+        let (d1_send, d1_recv) = unbounded();
+        let (c_send, _c_recv) = unbounded();
+        let (d_command_send, d_command_recv) = unbounded();
+        let (d_event_send, d_event_recv) = unbounded();
+
+        let neighbours11 = HashMap::from([(1, c_send.clone())]);
+        let mut drone = RustDoIt::new(
+            11,
+            d_event_send.clone(),
+            d_command_recv.clone(),
+            d1_recv.clone(),
+            neighbours11,
+            0.0,
+        );
+
+        thread::spawn(move || {
+            drone.run();
+        });
+
+        let mut ack = Packet {
+            pack_type: PacketType::Ack(Ack { fragment_index: 1 }),
+            routing_header: SourceRoutingHeader {
+                hop_index: 1,
+                hops: vec![1, 11, 12],
+            },
+            session_id: 1,
+        };
+
+        d1_send.send(ack.clone()).unwrap();
+
+        let got = match d_event_recv.recv().unwrap() {
+            DroneEvent::ControllerShortcut(p )=> p,
+            _ => panic!("Expected ControllerShortcut"),
+        };
+        ack.routing_header.hop_index += 1;
+
+        assert_eq!(ack, got);
+
+    }
+
     #[test]
     /// Checks if the packet is dropped by the second drone and a Nack is sent back. The first drone must have 0% PDR and the second one 100% PDR, otherwise the test will fail sometimes.
     pub fn generic_chain_fragment_drop() {
