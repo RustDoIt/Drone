@@ -1007,7 +1007,7 @@ mod test {
         let expected = Packet {
             pack_type: PacketType::Nack(Nack {
                 fragment_index: packet.get_fragment_index(),
-                nack_type: NackType::UnexpectedRecipient(12),
+                nack_type: NackType::UnexpectedRecipient(11),
             }),
             routing_header: SourceRoutingHeader::new(vec![11, 1], 1),
             session_id: 1,

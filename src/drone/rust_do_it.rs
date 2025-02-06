@@ -221,7 +221,7 @@ impl RustDoIt {
             flood_request,
         );
 
-        for (neighbor_id, neighbor) in &self.packet_send {
+        for (neighbor_id, neighbor) in self.packet_send.iter() {
             if *neighbor_id != prev_hop {
                 let result = match neighbor.send(new_flood_request.clone()) {
                     Ok(_) => self.controller_send.send(DroneEvent::PacketSent(new_flood_request.clone())),
@@ -368,7 +368,7 @@ impl RustDoIt {
         let current_hop = srh.current_hop();
         if current_hop != Some(self.id) {
             self.generate_nack(
-                NackType::UnexpectedRecipient(current_hop.unwrap()),
+                NackType::UnexpectedRecipient(self.id),
                 fragment_index,
                 srh.clone(),
                 session_id
@@ -423,12 +423,20 @@ impl RustDoIt {
             None => {
                 // step 4.1: if the next hop is not in the list of neighbours, generate a nack with
                 // NackType::ErrorInRouting and send it back to the source
-                self.generate_nack(
-                    NackType::ErrorInRouting(*next_hop),
-                    packet.get_fragment_index(),
-                    packet.routing_header,
-                    packet.session_id
-                );
+                match packet.pack_type {
+                    PacketType::Ack(_) | PacketType::Nack(_) | PacketType::FloodResponse(_) => {
+                        self.controller_send.send(DroneEvent::ControllerShortcut(packet)).ok();
+                    },
+                    _ => {
+                        self.generate_nack(
+                        NackType::ErrorInRouting(*next_hop),
+                        packet.get_fragment_index(),
+                        packet.routing_header,
+                        packet.session_id
+                        );
+                    }
+                }
+
             }
         }
     }
